@@ -1,0 +1,13 @@
+bin/
+obj/
+*.user
+*.suo
+.vs/
+
+# Game assemblies are referenced from the local install, never redistributed.
+*.dll
+*.pdb
+!**/lib/**/*.dll
+
+# Captured measurement data
+*.csv
