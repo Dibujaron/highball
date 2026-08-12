@@ -42,6 +42,15 @@ namespace StockPhysicsLOD
         private float _refreshTimer;
         private float _evalTimer;
 
+        // Discovery diagnostics. The first version of this class reported zero tracked
+        // cars and logged nothing at all, which made the failure impossible to locate.
+        // Every discovery path now accounts for itself.
+        private bool _discoveryReported;
+        private int _diagRecords;
+        private int _diagRbOnRoot;
+        private int _diagRbInChildren;
+        private int _diagNoRigidbody;
+
         // Live counters, surfaced in the UMM panel and the experiment log.
         internal int TrackedCount => _cars.Count;
         internal int DowngradedCount { get; private set; }
@@ -101,6 +110,9 @@ namespace StockPhysicsLOD
                 CarCuller culler = UnityEngine.Object.FindObjectOfType<CarCuller>();
                 if (culler == null)
                 {
+                    // Expected before the world finishes loading, but if it never resolves
+                    // we need to know rather than silently track nothing forever.
+                    ReportOnce("CarCuller not found in scene.");
                     return;
                 }
 
@@ -120,10 +132,16 @@ namespace StockPhysicsLOD
                 var records = _recordsField.GetValue(culler) as System.Collections.IList;
                 if (records == null)
                 {
+                    ReportOnce("CarCuller._records was null or not an IList.");
                     return;
                 }
 
                 var seen = new HashSet<string>();
+
+                _diagRecords = records.Count;
+                _diagRbOnRoot = 0;
+                _diagRbInChildren = 0;
+                _diagNoRigidbody = 0;
 
                 foreach (object record in records)
                 {
@@ -139,6 +157,8 @@ namespace StockPhysicsLOD
 
                         if (_recordCarField == null)
                         {
+                            ReportOnce("Culler record type " + record.GetType().FullName
+                                       + " has no public 'Car' field.");
                             return;
                         }
                     }
@@ -157,9 +177,26 @@ namespace StockPhysicsLOD
                     }
 
                     GameObject go = car.gameObject;
+
+                    // The body is not reliably on the car's root object. Fall back to a
+                    // child search before giving up, and record which path succeeded.
                     Rigidbody rb = go != null ? go.GetComponent<Rigidbody>() : null;
+                    if (rb != null)
+                    {
+                        _diagRbOnRoot++;
+                    }
+                    else if (go != null)
+                    {
+                        rb = go.GetComponentInChildren<Rigidbody>(true);
+                        if (rb != null)
+                        {
+                            _diagRbInChildren++;
+                        }
+                    }
+
                     if (rb == null)
                     {
+                        _diagNoRigidbody++;
                         continue;
                     }
 
@@ -200,10 +237,29 @@ namespace StockPhysicsLOD
 
                     _cars.RemoveAt(i);
                 }
+
+                if (!_discoveryReported && _diagRecords > 0)
+                {
+                    _discoveryReported = true;
+                    Main.Log(string.Format(
+                        "Discovery: {0} culler records -> {1} tracked (rb on root: {2}, rb in children: {3}, no rigidbody: {4}).",
+                        _diagRecords, _cars.Count, _diagRbOnRoot, _diagRbInChildren, _diagNoRigidbody));
+                }
             }
             catch (Exception ex)
             {
-                Main.Log("RefreshCars failed: " + ex.Message);
+                Main.Log("RefreshCars failed: " + ex);
+            }
+        }
+
+        private readonly HashSet<string> _reported = new HashSet<string>();
+
+        /// <summary>Logs a given message at most once per session, to keep hot paths quiet.</summary>
+        private void ReportOnce(string message)
+        {
+            if (_reported.Add(message))
+            {
+                Main.Log(message);
             }
         }
 
