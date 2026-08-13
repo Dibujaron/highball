@@ -20,6 +20,9 @@ namespace Highball
     /// The CSV columns are composed from whichever features are enabled: base columns
     /// first, then each enabled feature's own TelemetryHeaders/TelemetryValues, walked in
     /// the same FeatureHost.Features order so columns never silently misalign.
+    ///
+    /// Each session writes to its own uniquely-named file with exactly one banner and
+    /// header, readable as plain CSV; a mid-session Enabled drift rolls over to a new file.
     /// </summary>
     internal sealed class Telemetry
     {
@@ -43,10 +46,13 @@ namespace Highball
         private StreamWriter _writer;
         private int _rowsWritten;
 
+        private string _fileStem;
+        private int _rolloverCount;
+
         /// <summary>
-        /// The joined Ids of the feature set the most recently written header describes.
-        /// FlushWindow compares against this every row so a mid-session Enabled toggle gets
-        /// a fresh banner+header pair instead of silently shifting columns under a stale one.
+        /// The joined Ids of the feature set the currently-open file's header describes.
+        /// FlushWindow compares against this every row so a mid-session Enabled toggle
+        /// rolls over to a new file instead of silently shifting columns under a stale one.
         /// </summary>
         private string _headerFeatureIds;
 
@@ -63,21 +69,9 @@ namespace Highball
 
         internal void Init()
         {
-            try
-            {
-                CsvPath = Path.Combine(Application.persistentDataPath, "Highball.csv");
-
-                _writer = new StreamWriter(CsvPath, append: true) { AutoFlush = true };
-                WriteSessionHeader();
-                ResolveTarget();
-
-                Main.Log("Telemetry log: " + CsvPath);
-            }
-            catch (Exception ex)
-            {
-                Main.Log("Could not open telemetry log: " + ex.Message);
-                _writer = null;
-            }
+            _fileStem = "Highball-" + DateTime.Now.ToString("yyyyMMdd-HHmmss", CultureInfo.InvariantCulture);
+            OpenNewFile();
+            ResolveTarget();
         }
 
         /// <summary>
@@ -123,28 +117,28 @@ namespace Highball
         }
 
         /// <summary>
-        /// Writes a fresh "# SESSION" banner (naming the enabled feature set and the
-        /// experiment target) followed by the matching header row, and records which
-        /// feature set it describes. Called once from Init() and again from FlushWindow
-        /// whenever the enabled set has drifted since the last header was written.
-        ///
-        /// Guards its own writes the same way WriteRow does: FlushWindow calls this outside
-        /// of any try/catch of its own, so an unguarded write failure here (disk full,
-        /// permission revoked mid-session, file locked) would propagate through Tick to
-        /// Main.OnUpdate's catch-all and disable the entire mod over a telemetry I/O error.
-        /// Catching here keeps a CSV failure confined to telemetry, same as WriteRow.
+        /// Closes whatever file is currently open, if any, then opens the next one — the
+        /// first file on the initial call, a uniquely-suffixed roll-over file on every call
+        /// after — and writes its single banner + header pair. Guarded on its own: a
+        /// failure here (disk full, permission revoked mid-session, file locked) must
+        /// degrade telemetry alone rather than propagate through Tick to Main.OnUpdate's
+        /// catch-all, which would disable the entire mod and release every car.
         /// </summary>
-        private void WriteSessionHeader()
+        private void OpenNewFile()
         {
-            if (_writer == null)
-            {
-                return;
-            }
+            Shutdown();
+            _rolloverCount++;
 
             try
             {
-                string enabledJoin = string.Join("|", EnabledFeatures());
+                string fileName = _rolloverCount == 1
+                    ? _fileStem + ".csv"
+                    : _fileStem + "-" + _rolloverCount.ToString(CultureInfo.InvariantCulture) + ".csv";
+                CsvPath = Path.Combine(Application.persistentDataPath, fileName);
 
+                _writer = new StreamWriter(CsvPath, append: false) { AutoFlush = true };
+
+                string enabledJoin = string.Join("|", EnabledFeatures());
                 _writer.WriteLine("# SESSION " + DateTime.Now.ToString("o", CultureInfo.InvariantCulture)
                                   + " features=" + enabledJoin
                                   + " target=" + Settings.Instance.ExperimentTarget);
@@ -153,19 +147,21 @@ namespace Highball
                 ValidateFeatureTelemetryLengths();
 
                 _headerFeatureIds = enabledJoin;
+
+                Main.Log("Telemetry log: " + CsvPath);
             }
             catch (Exception ex)
             {
-                Main.Log("Telemetry log write failed, disabling: " + ex.Message);
-                Shutdown();
+                Main.Log("Could not open telemetry log: " + ex.Message);
+                _writer = null;
             }
         }
 
         /// <summary>
         /// A feature whose TelemetryHeaders and TelemetryValues lengths disagree shifts
-        /// every column to its right with no diagnostic. Checked whenever the header is
-        /// (re)written so a newly-enabled feature is validated too, not just the set present
-        /// at Init().
+        /// every column to its right with no diagnostic. Checked whenever a file's header
+        /// is written so a newly-enabled feature is validated too, not just the set
+        /// present at Init().
         /// </summary>
         private void ValidateFeatureTelemetryLengths()
         {
@@ -262,14 +258,13 @@ namespace Highball
             if (_frames > 0 && _windowElapsed > 0f)
             {
                 // A mid-session Enabled toggle (Task 7 adds a live per-feature toggle)
-                // changes what FullHeader() and the cells below would produce. The header
-                // is only written once per WriteSessionHeader call, so if the enabled set
-                // has drifted since then, re-emit a fresh banner+header pair now rather than
-                // let this row's columns silently shift under the stale header.
-                string enabledJoin = string.Join("|", EnabledFeatures());
-                if (enabledJoin != _headerFeatureIds)
+                // changes what FullHeader() and the cells below would produce. Roll over to
+                // a new file rather than re-emit a second header into this one. Skipped once
+                // _writer is null: telemetry already failed and stays permanently degraded.
+                if (_writer != null && string.Join("|", EnabledFeatures()) != _headerFeatureIds)
                 {
-                    WriteSessionHeader();
+                    Main.Log("Telemetry: enabled feature set changed; rolling over to a new file.");
+                    OpenNewFile();
                 }
 
                 double avgFrameMs = (_frameSeconds * 1000.0) / _frames;
