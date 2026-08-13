@@ -43,6 +43,13 @@ namespace Highball
         private StreamWriter _writer;
         private int _rowsWritten;
 
+        /// <summary>
+        /// The joined Ids of the feature set the most recently written header describes.
+        /// FlushWindow compares against this every row so a mid-session Enabled toggle gets
+        /// a fresh banner+header pair instead of silently shifting columns under a stale one.
+        /// </summary>
+        private string _headerFeatureIds;
+
         internal string CsvPath { get; private set; }
         internal bool ActiveWindow => _activeWindow;
         internal int RowsWritten => _rowsWritten;
@@ -61,9 +68,8 @@ namespace Highball
                 CsvPath = Path.Combine(Application.persistentDataPath, "Highball.csv");
 
                 _writer = new StreamWriter(CsvPath, append: true) { AutoFlush = true };
-                _writer.WriteLine("# SESSION " + DateTime.Now.ToString("o", CultureInfo.InvariantCulture)
-                                  + " features=" + string.Join("|", EnabledFeatures()));
-                _writer.WriteLine(string.Join(",", FullHeader()));
+                WriteSessionHeader();
+                ResolveTarget();
 
                 Main.Log("Telemetry log: " + CsvPath);
             }
@@ -71,6 +77,93 @@ namespace Highball
             {
                 Main.Log("Could not open telemetry log: " + ex.Message);
                 _writer = null;
+            }
+        }
+
+        /// <summary>
+        /// Validates Settings.ExperimentTarget once at startup and logs loudly if it cannot
+        /// possibly produce two distinguishable arms. This does not correct anything or
+        /// change ApplyMode's behaviour — ApplyMode still resolves the target by Id on every
+        /// call, since a feature's Enabled state can change at runtime. The point is to make
+        /// a silently-null experiment visible in the log instead of invisible in the CSV.
+        /// </summary>
+        private void ResolveTarget()
+        {
+            string target = Settings.Instance.ExperimentTarget;
+            IFeature feature = _host.Find(target);
+
+            if (feature == null)
+            {
+                Main.Log("Telemetry: ExperimentTarget '" + target + "' matches no feature Id. " +
+                         "The A/B harness will alternate nothing; both arms will be identical.");
+                return;
+            }
+
+            if (!feature.Enabled)
+            {
+                Main.Log("Telemetry: ExperimentTarget '" + target + "' (" + feature.DisplayName + ") is not " +
+                         "Enabled. FeatureHost.Apply never claims for a disabled feature, so alternating its " +
+                         "Active flag changes nothing; both arms will be identical.");
+            }
+
+            // Probe for an inert Active setter (e.g. a read-only probe) without disturbing
+            // the feature's actual state. Safe to do here: Init() runs before any car has
+            // been offered to a feature, so this flip has no observable side effect.
+            bool original = feature.Active;
+            feature.Active = !original;
+            bool inert = feature.Active == original;
+            feature.Active = original;
+
+            if (inert)
+            {
+                Main.Log("Telemetry: ExperimentTarget '" + target + "' (" + feature.DisplayName + ") has an " +
+                         "inert Active setter; its value never changes. The A/B harness will alternate " +
+                         "nothing; both arms will be identical.");
+            }
+        }
+
+        /// <summary>
+        /// Writes a fresh "# SESSION" banner (naming the enabled feature set and the
+        /// experiment target) followed by the matching header row, and records which
+        /// feature set it describes. Called once from Init() and again from FlushWindow
+        /// whenever the enabled set has drifted since the last header was written.
+        /// </summary>
+        private void WriteSessionHeader()
+        {
+            string enabledJoin = string.Join("|", EnabledFeatures());
+
+            _writer.WriteLine("# SESSION " + DateTime.Now.ToString("o", CultureInfo.InvariantCulture)
+                              + " features=" + enabledJoin
+                              + " target=" + Settings.Instance.ExperimentTarget);
+            _writer.WriteLine(string.Join(",", FullHeader()));
+
+            ValidateFeatureTelemetryLengths();
+
+            _headerFeatureIds = enabledJoin;
+        }
+
+        /// <summary>
+        /// A feature whose TelemetryHeaders and TelemetryValues lengths disagree shifts
+        /// every column to its right with no diagnostic. Checked whenever the header is
+        /// (re)written so a newly-enabled feature is validated too, not just the set present
+        /// at Init().
+        /// </summary>
+        private void ValidateFeatureTelemetryLengths()
+        {
+            IFeature[] features = _host.Features;
+            for (int i = 0; i < features.Length; i++)
+            {
+                if (!features[i].Enabled) continue;
+
+                int headerCount = features[i].TelemetryHeaders.Length;
+                int valueCount = features[i].TelemetryValues.Length;
+
+                if (headerCount != valueCount)
+                {
+                    Main.Log("Telemetry: feature '" + features[i].Id + "' returned " + headerCount +
+                             " TelemetryHeaders but " + valueCount + " TelemetryValues; every later column " +
+                             "will be shifted. Fix the feature so the two arrays have equal length.");
+                }
             }
         }
 
@@ -149,6 +242,17 @@ namespace Highball
         {
             if (_frames > 0 && _windowElapsed > 0f)
             {
+                // A mid-session Enabled toggle (Task 7 adds a live per-feature toggle)
+                // changes what FullHeader() and the cells below would produce. The header
+                // is only written once per WriteSessionHeader call, so if the enabled set
+                // has drifted since then, re-emit a fresh banner+header pair now rather than
+                // let this row's columns silently shift under the stale header.
+                string enabledJoin = string.Join("|", EnabledFeatures());
+                if (enabledJoin != _headerFeatureIds)
+                {
+                    WriteSessionHeader();
+                }
+
                 double avgFrameMs = (_frameSeconds * 1000.0) / _frames;
                 double fps = _frames / _windowElapsed;
 
@@ -186,7 +290,13 @@ namespace Highball
             _settleRemaining = SettleSeconds;
         }
 
-        /// <summary>Used when the experiment is switched off: pin every feature on.</summary>
+        /// <summary>
+        /// Sets the window state directly and applies it immediately, bypassing
+        /// SwitchMode's alternation. Used both when the experiment is off
+        /// (ForceActive(true) pins every feature on) and when it is on
+        /// (ForceActive(false) starts the session on baseline, pinning every feature on
+        /// except the experiment target).
+        /// </summary>
         internal void ForceActive(bool value)
         {
             _activeWindow = value;
