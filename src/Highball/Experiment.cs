@@ -158,6 +158,10 @@ namespace Highball
         /// <summary>
         /// Sets Active on every feature. A feature that is Enabled but not Active claims
         /// nothing and releases everything, so a BASELINE window is a true control.
+        ///
+        /// Switching to inactive releases synchronously rather than waiting for the next
+        /// _host.Apply pass: a BASELINE window must not start counting frames while cars
+        /// are still downgraded from the preceding ACTIVE window.
         /// </summary>
         private void SetActive(bool value)
         {
@@ -165,6 +169,11 @@ namespace Highball
             for (int i = 0; i < features.Length; i++)
             {
                 features[i].Active = value;
+
+                if (!value)
+                {
+                    features[i].ReleaseAll();
+                }
             }
         }
 

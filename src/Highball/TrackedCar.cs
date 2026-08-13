@@ -6,7 +6,7 @@ namespace Highball
     /// <summary>
     /// A rolling-stock car tracked by the LOD system. Carries the facts the Evaluator
     /// computes each pass, plus the feature-specific scratch fields that today's action
-    /// logic (still in LodManager) uses to know what it has already done to the car.
+    /// logic (in SolverLodFeature) uses to know what it has already done to the car.
     /// </summary>
     internal sealed class TrackedCar
     {
@@ -20,8 +20,9 @@ namespace Highball
         /// <summary>Name of the feature currently holding this car at reduced fidelity, if any.</summary>
         internal string ClaimedBy;
 
-        // --- feature scratch fields, still owned by LodManager until a later task moves
-        // action/mutation logic out into features ---
+        // --- feature scratch fields, owned by SolverLodFeature. General rather than
+        // feature-private because more than one feature may need to remember an
+        // original solver-iteration count if a later feature also touches it. ---
         internal int OriginalSolverIterations;
         internal bool IsDowngraded;
     }

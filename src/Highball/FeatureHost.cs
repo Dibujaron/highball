@@ -1,3 +1,4 @@
+using System;
 using System.Collections.Generic;
 
 namespace Highball
@@ -79,13 +80,31 @@ namespace Highball
 
         /// <summary>
         /// Every feature releases everything, regardless of its enabled state — a feature
-        /// switched off at runtime must still hand back what it was holding.
+        /// switched off at runtime must still hand back what it was holding. This is the
+        /// mod's only unconditional-restore path, so one feature throwing must not stop
+        /// the rest from releasing, and no car may be left naming a feature that already
+        /// let go of it.
         /// </summary>
-        internal void ReleaseAll()
+        internal void ReleaseAll(IList<TrackedCar> cars)
         {
             for (int i = 0; i < _features.Length; i++)
             {
-                _features[i].ReleaseAll();
+                try
+                {
+                    _features[i].ReleaseAll();
+                }
+                catch (Exception ex)
+                {
+                    Main.Log("Feature '" + _features[i].Id + "' threw from ReleaseAll(): " + ex);
+                }
+            }
+
+            for (int i = 0; i < cars.Count; i++)
+            {
+                if (cars[i] != null)
+                {
+                    cars[i].ClaimedBy = null;
+                }
             }
         }
     }

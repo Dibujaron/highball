@@ -82,7 +82,7 @@ namespace Highball
             {
                 // Leaving claimed rigidbodies behind would be a silent, persistent
                 // change to the player's save state. Always hand them back.
-                _host.ReleaseAll();
+                _host.ReleaseAll(_registry.Cars);
                 _registry.Clear();
                 Log("Disabled, all cars restored.");
             }
@@ -125,7 +125,7 @@ namespace Highball
             {
                 Log("Tick failed, disabling to be safe: " + ex);
                 Enabled = false;
-                _host.ReleaseAll();
+                _host.ReleaseAll(_registry.Cars);
                 _registry.Clear();
             }
         }
@@ -151,7 +151,11 @@ namespace Highball
 
         private static bool OnUnload(UnityModManager.ModEntry modEntry)
         {
-            _host?.ReleaseAll();
+            if (_host != null && _registry != null)
+            {
+                _host.ReleaseAll(_registry.Cars);
+            }
+
             _registry?.Clear();
             _experiment?.Shutdown();
             return true;
