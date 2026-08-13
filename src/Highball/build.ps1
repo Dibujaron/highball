@@ -56,6 +56,7 @@ $sources = @(
     (Join-Path $here "IFeature.cs"),
     (Join-Path $here "FeatureHost.cs"),
     (Join-Path $here "SolverLodFeature.cs"),
+    (Join-Path $here "SleepHeadroomProbe.cs"),
     (Join-Path $here "Experiment.cs"),
     (Join-Path $here "Properties\AssemblyInfo.cs")
 )

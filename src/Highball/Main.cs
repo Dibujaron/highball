@@ -25,6 +25,7 @@ namespace Highball
         private static Evaluator _evaluator;
         private static FeatureHost _host;
         private static Experiment _experiment;
+        private static SleepHeadroomProbe _probe;
 
         private static float _refreshTimer;
         private static float _evalTimer;
@@ -36,10 +37,14 @@ namespace Highball
 
             _registry = new CarRegistry();
             _evaluator = new Evaluator();
+            _probe = new SleepHeadroomProbe();
             _host = new FeatureHost(new IFeature[]
             {
                 // Priority order. Sleep, once it exists, goes ahead of solver LOD.
-                new SolverLodFeature()
+                new SolverLodFeature(),
+                // Read-only; never claims, so its position here doesn't affect
+                // arbitration. Kept last so mutating features stay first and readable.
+                _probe
             });
 
             // A car reaped by discovery may still be claimed by a feature; hand it back
@@ -113,6 +118,7 @@ namespace Highball
                     float dt = _evalTimer;
                     _evalTimer = 0f;
                     _evaluator.Evaluate(_registry.Cars, dt);
+                    _probe.Observe(_registry.Cars);
                     _host.Apply(_registry.Cars);
                 }
 

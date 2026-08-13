@@ -36,6 +36,13 @@ namespace Highball
         /// </summary>
         public bool EnableSolverLod = false;
 
+        /// <summary>
+        /// Read-only sleep headroom probe. Answers, before any sleep code is written,
+        /// whether forcing distant parked cars to sleep is worth building at all. On by
+        /// default: it mutates nothing, so there is no cost to always measuring.
+        /// </summary>
+        public bool EnableSleepHeadroomProbe = true;
+
         // --- cadence ---
 
         public float RefreshIntervalSeconds = 2f;
