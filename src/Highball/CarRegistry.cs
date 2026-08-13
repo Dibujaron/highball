@@ -142,11 +142,21 @@ namespace Highball
                         continue;
                     }
 
+                    // Seed the speed baseline at discovery time, mirroring the old
+                    // CarState.LastSpeed seed. Without this, a car already moving when
+                    // first discovered would read a huge speed delta on its first
+                    // evaluation pass (0 -> current speed instead of ~0), tripping the
+                    // steady-accel threshold and costing it one EvaluateIntervalSeconds
+                    // of eligibility for no reason.
+                    CarFacts initialFacts = default(CarFacts);
+                    initialFacts.Speed = rb.velocity.magnitude;
+
                     var tracked = new TrackedCar
                     {
                         Id = car.id,
                         Car = car,
                         Rigidbody = rb,
+                        Facts = initialFacts,
                         OriginalSolverIterations = rb.solverIterations,
                         IsDowngraded = false
                     };
