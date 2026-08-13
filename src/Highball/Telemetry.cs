@@ -69,9 +69,24 @@ namespace Highball
 
         internal void Init()
         {
-            _fileStem = "Highball-" + DateTime.Now.ToString("yyyyMMdd-HHmmss", CultureInfo.InvariantCulture);
+            // Millisecond resolution: two Init() calls in the same wall-clock second would
+            // otherwise produce the same stem, and with append: false the second would
+            // silently wipe the first session's file instead of harmlessly appending to it.
+            _fileStem = "Highball-" + DateTime.Now.ToString("yyyyMMdd-HHmmssfff", CultureInfo.InvariantCulture);
             OpenNewFile();
-            ResolveTarget();
+
+            // ResolveTarget() is not file I/O, but it is structurally throwable (it walks
+            // an arbitrary IFeature's Id/DisplayName/Active accessors), and Main.Load has no
+            // try/catch of its own around Telemetry.Init() — an uncaught throw here would
+            // fail the entire mod load, not just degrade telemetry. Guard it the same way.
+            try
+            {
+                ResolveTarget();
+            }
+            catch (Exception ex)
+            {
+                Main.Log("Telemetry: ResolveTarget failed: " + ex.Message);
+            }
         }
 
         /// <summary>
@@ -102,11 +117,20 @@ namespace Highball
 
             // Probe for an inert Active setter (e.g. a read-only probe) without disturbing
             // the feature's actual state. Safe to do here: Init() runs before any car has
-            // been offered to a feature, so this flip has no observable side effect.
+            // been offered to a feature, so this flip has no observable side effect. The
+            // restore runs in finally so a setter that throws mid-probe cannot leave Active
+            // inverted.
             bool original = feature.Active;
-            feature.Active = !original;
-            bool inert = feature.Active == original;
-            feature.Active = original;
+            bool inert;
+            try
+            {
+                feature.Active = !original;
+                inert = feature.Active == original;
+            }
+            finally
+            {
+                feature.Active = original;
+            }
 
             if (inert)
             {
@@ -127,16 +151,21 @@ namespace Highball
         private void OpenNewFile()
         {
             Shutdown();
-            _rolloverCount++;
+
+            // Only the local `attempt` (and, on success below, the fields it seeds) records
+            // this attempt — CsvPath and _rolloverCount are left untouched on failure, so a
+            // failed open never claims a roll-over index it didn't use and never reports a
+            // path that was never actually opened.
+            int attempt = _rolloverCount + 1;
 
             try
             {
-                string fileName = _rolloverCount == 1
+                string fileName = attempt == 1
                     ? _fileStem + ".csv"
-                    : _fileStem + "-" + _rolloverCount.ToString(CultureInfo.InvariantCulture) + ".csv";
-                CsvPath = Path.Combine(Application.persistentDataPath, fileName);
+                    : _fileStem + "-" + attempt.ToString(CultureInfo.InvariantCulture) + ".csv";
+                string path = Path.Combine(Application.persistentDataPath, fileName);
 
-                _writer = new StreamWriter(CsvPath, append: false) { AutoFlush = true };
+                _writer = new StreamWriter(path, append: false) { AutoFlush = true };
 
                 string enabledJoin = string.Join("|", EnabledFeatures());
                 _writer.WriteLine("# SESSION " + DateTime.Now.ToString("o", CultureInfo.InvariantCulture)
@@ -147,13 +176,20 @@ namespace Highball
                 ValidateFeatureTelemetryLengths();
 
                 _headerFeatureIds = enabledJoin;
+                CsvPath = path;
+                _rolloverCount = attempt;
 
                 Main.Log("Telemetry log: " + CsvPath);
             }
             catch (Exception ex)
             {
                 Main.Log("Could not open telemetry log: " + ex.Message);
-                _writer = null;
+                // Shutdown(), not a bare null-assign: the StreamWriter may already be open
+                // (construction succeeded but a later WriteLine/validate threw), and an
+                // undisposed handle here is a leaked, permanently-locked file for the rest
+                // of the process. Shutdown() disposes under its own catch and nulls _writer
+                // unconditionally, so this is safe even if construction itself is what threw.
+                Shutdown();
             }
         }
 
