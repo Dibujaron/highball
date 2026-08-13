@@ -42,8 +42,8 @@ namespace Highball
         internal Action<TrackedCar> OnCarRemoved;
 
         /// <summary>
-        /// Enumerates rolling stock via CarCuller's private record list. This mirrors how
-        /// RollingStock Optimizer finds cars; the game exposes no public equivalent.
+        /// Enumerates rolling stock via CarCuller's private record list. The game exposes
+        /// no public equivalent, so reflection over that list is the only route in.
         /// </summary>
         internal void Refresh()
         {

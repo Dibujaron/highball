@@ -5,15 +5,15 @@ using UnityModManagerNet;
 namespace Highball
 {
     /// <summary>
-    /// Rolling Stock Physics LOD.
+    /// Highball — a performance mod for Railroader.
     ///
-    /// Reduces PhysX solver iterations on distant rolling stock that is in steady-state
-    /// motion. Targets the gap left by RollingStock Optimizer, which by design never
-    /// touches moving cars — and moving stock is what the community reports as the
-    /// dominant cost.
+    /// Hosts a set of independently-toggleable features over a shared core that discovers
+    /// rolling stock, computes per-car facts once per pass, and arbitrates which feature
+    /// may act on which car.
     ///
-    /// Ships with an A/B harness enabled by default, because the last three performance
-    /// hypotheses on this problem were all wrong and this one deserves evidence too.
+    /// Ships with an A/B harness enabled by default, because the performance hypotheses
+    /// tried on this problem so far were wrong when measured, and the next one deserves
+    /// evidence too.
     /// </summary>
     public static class Main
     {
