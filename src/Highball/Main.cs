@@ -1,5 +1,4 @@
 using System;
-using System.Collections.Generic;
 using UnityEngine;
 using UnityModManagerNet;
 
@@ -24,7 +23,7 @@ namespace Highball
         private static CarRegistry _registry;
         private static Evaluator _evaluator;
         private static FeatureHost _host;
-        private static Experiment _experiment;
+        private static Telemetry _telemetry;
         private static SleepHeadroomProbe _probe;
 
         private static float _refreshTimer;
@@ -52,8 +51,8 @@ namespace Highball
             // feature state of its own, so it cannot do this itself.
             _registry.OnCarRemoved = car => _host.ReleaseAll(car);
 
-            _experiment = new Experiment(_host, _registry, _evaluator);
-            _experiment.Init();
+            _telemetry = new Telemetry(_host, _registry, _evaluator);
+            _telemetry.Init();
 
             modEntry.OnToggle = OnToggle;
             modEntry.OnUpdate = OnUpdate;
@@ -74,11 +73,11 @@ namespace Highball
                 if (Settings.Instance.RunExperiment)
                 {
                     // Start on baseline so the first recorded window is a control.
-                    _experiment.ForceActive(false);
+                    _telemetry.ForceActive(false);
                 }
                 else
                 {
-                    _experiment.ForceActive(true);
+                    _telemetry.ForceActive(true);
                 }
 
                 Log("Enabled.");
@@ -124,7 +123,7 @@ namespace Highball
 
                 if (Settings.Instance.RunExperiment)
                 {
-                    _experiment.Tick(deltaTime);
+                    _telemetry.Tick(deltaTime);
                 }
             }
             catch (Exception ex)
@@ -139,11 +138,11 @@ namespace Highball
         private static void OnGUI(UnityModManager.ModEntry modEntry)
         {
             GUILayout.Label("Highball");
-            GUILayout.Label($"Tracked: {_registry.TrackedCount}   Moving: {_evaluator.MovingCount}   Downgraded: {CountDowngraded()}");
+            GUILayout.Label($"Tracked: {_registry.TrackedCount}   Moving: {_evaluator.MovingCount}");
 
             if (Settings.Instance.RunExperiment)
             {
-                GUILayout.Label($"Experiment window: {(_experiment.ActiveWindow ? "ACTIVE" : "BASELINE")}   rows: {_experiment.RowsWritten}");
+                GUILayout.Label($"Experiment window: {(_telemetry.ActiveWindow ? "ACTIVE" : "BASELINE")}   rows: {_telemetry.RowsWritten}");
             }
 
             GUILayout.Space(8f);
@@ -163,28 +162,8 @@ namespace Highball
             }
 
             _registry?.Clear();
-            _experiment?.Shutdown();
+            _telemetry?.Shutdown();
             return true;
-        }
-
-        /// <summary>
-        /// Number of currently-claimed cars, for the panel. A stopgap until Task 6 gives
-        /// each feature its own telemetry column.
-        /// </summary>
-        private static int CountDowngraded()
-        {
-            IList<TrackedCar> cars = _registry.Cars;
-            int count = 0;
-
-            for (int i = 0; i < cars.Count; i++)
-            {
-                if (cars[i] != null && cars[i].IsDowngraded)
-                {
-                    count++;
-                }
-            }
-
-            return count;
         }
 
         public static void Log(string msg)

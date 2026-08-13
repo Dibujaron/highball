@@ -7,17 +7,21 @@ using UnityEngine;
 namespace Highball
 {
     /// <summary>
-    /// Alternates every feature between baseline and active windows and records frame
-    /// timings for each, so the effect can be measured without the player doing anything.
+    /// Alternates a single targeted feature between baseline and active windows and
+    /// records frame timings for each, so the effect can be measured without the player
+    /// doing anything.
     ///
     /// Alternating rather than running one long A then one long B matters: it controls for
     /// whatever the player happens to be doing, which drifts over a session.
     ///
-    /// This is a stopgap: it flips every feature's Active flag in lockstep and reports a
-    /// single aggregate "downgraded" count. A later task rewrites this into a proper
-    /// Telemetry component with a per-feature experiment target and per-feature columns.
+    /// Only <see cref="Settings.ExperimentTarget"/> flips between windows. Every other
+    /// feature holds whatever its own toggle says, so an fps delta can always be
+    /// attributed to the one feature under test rather than to all of them at once.
+    /// The CSV columns are composed from whichever features are enabled: base columns
+    /// first, then each enabled feature's own TelemetryHeaders/TelemetryValues, walked in
+    /// the same FeatureHost.Features order so columns never silently misalign.
     /// </summary>
-    internal sealed class Experiment
+    internal sealed class Telemetry
     {
         /// <summary>
         /// Frames discarded after each mode switch. Solver iteration changes settle within
@@ -43,7 +47,7 @@ namespace Highball
         internal bool ActiveWindow => _activeWindow;
         internal int RowsWritten => _rowsWritten;
 
-        internal Experiment(FeatureHost host, CarRegistry registry, Evaluator evaluator)
+        internal Telemetry(FeatureHost host, CarRegistry registry, Evaluator evaluator)
         {
             _host = host;
             _registry = registry;
@@ -55,21 +59,17 @@ namespace Highball
             try
             {
                 CsvPath = Path.Combine(Application.persistentDataPath, "Highball.csv");
-                bool isNew = !File.Exists(CsvPath);
 
                 _writer = new StreamWriter(CsvPath, append: true) { AutoFlush = true };
-                _writer.WriteLine("# SESSION " + DateTime.Now.ToString("o", CultureInfo.InvariantCulture));
+                _writer.WriteLine("# SESSION " + DateTime.Now.ToString("o", CultureInfo.InvariantCulture)
+                                  + " features=" + string.Join("|", EnabledFeatures()));
+                _writer.WriteLine(string.Join(",", FullHeader()));
 
-                if (isNew)
-                {
-                    _writer.WriteLine("wall_clock,mode,window_s,frames,avg_frame_ms,fps,tracked,moving,downgraded");
-                }
-
-                Main.Log("Experiment log: " + CsvPath);
+                Main.Log("Telemetry log: " + CsvPath);
             }
             catch (Exception ex)
             {
-                Main.Log("Could not open experiment log: " + ex.Message);
+                Main.Log("Could not open telemetry log: " + ex.Message);
                 _writer = null;
             }
         }
@@ -111,6 +111,40 @@ namespace Highball
             SwitchMode();
         }
 
+        private string[] BaseHeaders()
+        {
+            return new[] { "wall_clock", "mode", "window_s", "frames", "avg_frame_ms", "fps", "tracked", "moving" };
+        }
+
+        private string[] EnabledFeatures()
+        {
+            var ids = new List<string>();
+            IFeature[] features = _host.Features;
+            for (int i = 0; i < features.Length; i++)
+            {
+                if (features[i].Enabled) ids.Add(features[i].Id);
+            }
+
+            return ids.ToArray();
+        }
+
+        /// <summary>
+        /// Walks _host.Features in order, appending each enabled feature's headers. The row
+        /// builder in FlushWindow must walk the same array with the same Enabled filter, or
+        /// columns silently misalign with values.
+        /// </summary>
+        private string[] FullHeader()
+        {
+            var cells = new List<string>(BaseHeaders());
+            IFeature[] features = _host.Features;
+            for (int i = 0; i < features.Length; i++)
+            {
+                if (features[i].Enabled) cells.AddRange(features[i].TelemetryHeaders);
+            }
+
+            return cells.ToArray();
+        }
+
         private void FlushWindow()
         {
             if (_frames > 0 && _windowElapsed > 0f)
@@ -118,7 +152,7 @@ namespace Highball
                 double avgFrameMs = (_frameSeconds * 1000.0) / _frames;
                 double fps = _frames / _windowElapsed;
 
-                WriteRow(new[]
+                var cells = new List<string>
                 {
                     DateTime.Now.ToString("HH:mm:ss.fff", CultureInfo.InvariantCulture),
                     _activeWindow ? "ACTIVE" : "BASELINE",
@@ -127,9 +161,17 @@ namespace Highball
                     avgFrameMs.ToString("F3", CultureInfo.InvariantCulture),
                     fps.ToString("F3", CultureInfo.InvariantCulture),
                     _registry.TrackedCount.ToString(CultureInfo.InvariantCulture),
-                    _evaluator.MovingCount.ToString(CultureInfo.InvariantCulture),
-                    CountDowngraded().ToString(CultureInfo.InvariantCulture)
-                });
+                    _evaluator.MovingCount.ToString(CultureInfo.InvariantCulture)
+                };
+
+                // Same array, same order, same filter as FullHeader() above.
+                IFeature[] features = _host.Features;
+                for (int i = 0; i < features.Length; i++)
+                {
+                    if (features[i].Enabled) cells.AddRange(features[i].TelemetryValues);
+                }
+
+                WriteRow(cells.ToArray());
             }
 
             _frames = 0;
@@ -140,7 +182,7 @@ namespace Highball
         private void SwitchMode()
         {
             _activeWindow = !_activeWindow;
-            SetActive(_activeWindow);
+            ApplyMode();
             _settleRemaining = SettleSeconds;
         }
 
@@ -148,7 +190,7 @@ namespace Highball
         internal void ForceActive(bool value)
         {
             _activeWindow = value;
-            SetActive(value);
+            ApplyMode();
             _frames = 0;
             _frameSeconds = 0f;
             _windowElapsed = 0f;
@@ -156,18 +198,26 @@ namespace Highball
         }
 
         /// <summary>
-        /// Sets Active on every feature. A feature that is Enabled but not Active claims
-        /// nothing and releases everything, so a BASELINE window is a true control.
+        /// Only the feature under test (Settings.ExperimentTarget) alternates with
+        /// _activeWindow. Every other feature is pinned Active so its own Enabled toggle is
+        /// the sole thing controlling it. Flipping all of them at once would confound the
+        /// comparison, since an fps delta could not be attributed to any one of them.
         ///
-        /// Switching to inactive releases synchronously rather than waiting for the next
+        /// A feature that is Enabled but not Active must claim nothing and release
+        /// everything, so a BASELINE window is a true control. Switching a feature to
+        /// inactive releases synchronously here rather than waiting for the next
         /// _host.Apply pass: a BASELINE window must not start counting frames while cars
         /// are still downgraded from the preceding ACTIVE window.
         /// </summary>
-        private void SetActive(bool value)
+        private void ApplyMode()
         {
             IFeature[] features = _host.Features;
+            string target = Settings.Instance.ExperimentTarget;
+
             for (int i = 0; i < features.Length; i++)
             {
+                bool value = features[i].Id == target ? _activeWindow : true;
+
                 // Set the flag before attempting release, so a throwing ReleaseAll can
                 // never prevent this or any later feature's Active flag from being set.
                 features[i].Active = value;
@@ -186,22 +236,6 @@ namespace Highball
             }
         }
 
-        private int CountDowngraded()
-        {
-            IList<TrackedCar> cars = _registry.Cars;
-            int count = 0;
-
-            for (int i = 0; i < cars.Count; i++)
-            {
-                if (cars[i] != null && cars[i].IsDowngraded)
-                {
-                    count++;
-                }
-            }
-
-            return count;
-        }
-
         private void WriteRow(string[] cells)
         {
             if (_writer == null)
@@ -216,7 +250,7 @@ namespace Highball
             }
             catch (Exception ex)
             {
-                Main.Log("Experiment log write failed, disabling: " + ex.Message);
+                Main.Log("Telemetry log write failed, disabling: " + ex.Message);
                 Shutdown();
             }
         }

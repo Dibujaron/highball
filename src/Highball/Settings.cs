@@ -58,6 +58,13 @@ namespace Highball
 
         public float ExperimentWindowSeconds = 30f;
 
+        /// <summary>
+        /// The Id of the single feature the A/B harness alternates. Every other feature
+        /// holds whatever its own Enabled toggle says, so an fps delta can be attributed to
+        /// this one feature rather than to all of them at once.
+        /// </summary>
+        public string ExperimentTarget = "solver_lod";
+
         public override void Save(UnityModManager.ModEntry modEntry)
         {
             Save(this, modEntry);
