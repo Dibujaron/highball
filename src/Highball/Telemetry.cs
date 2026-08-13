@@ -127,19 +127,38 @@ namespace Highball
         /// experiment target) followed by the matching header row, and records which
         /// feature set it describes. Called once from Init() and again from FlushWindow
         /// whenever the enabled set has drifted since the last header was written.
+        ///
+        /// Guards its own writes the same way WriteRow does: FlushWindow calls this outside
+        /// of any try/catch of its own, so an unguarded write failure here (disk full,
+        /// permission revoked mid-session, file locked) would propagate through Tick to
+        /// Main.OnUpdate's catch-all and disable the entire mod over a telemetry I/O error.
+        /// Catching here keeps a CSV failure confined to telemetry, same as WriteRow.
         /// </summary>
         private void WriteSessionHeader()
         {
-            string enabledJoin = string.Join("|", EnabledFeatures());
+            if (_writer == null)
+            {
+                return;
+            }
 
-            _writer.WriteLine("# SESSION " + DateTime.Now.ToString("o", CultureInfo.InvariantCulture)
-                              + " features=" + enabledJoin
-                              + " target=" + Settings.Instance.ExperimentTarget);
-            _writer.WriteLine(string.Join(",", FullHeader()));
+            try
+            {
+                string enabledJoin = string.Join("|", EnabledFeatures());
 
-            ValidateFeatureTelemetryLengths();
+                _writer.WriteLine("# SESSION " + DateTime.Now.ToString("o", CultureInfo.InvariantCulture)
+                                  + " features=" + enabledJoin
+                                  + " target=" + Settings.Instance.ExperimentTarget);
+                _writer.WriteLine(string.Join(",", FullHeader()));
 
-            _headerFeatureIds = enabledJoin;
+                ValidateFeatureTelemetryLengths();
+
+                _headerFeatureIds = enabledJoin;
+            }
+            catch (Exception ex)
+            {
+                Main.Log("Telemetry log write failed, disabling: " + ex.Message);
+                Shutdown();
+            }
         }
 
         /// <summary>
