@@ -1134,73 +1134,145 @@ public float RequiredStationarySeconds = 5f;
 public string ExperimentTarget = "solver_lod";
 ```
 
-- [ ] **Step 2: Replace DrawGui with a per-feature layout**
+- [ ] **Step 2: Annotate the settings so UMM draws them**
 
-`Settings.DrawGui` keeps only the core settings — `MinDistanceMeters`,
-`SteadyAccelThreshold`, `RequiredSteadySeconds`, `RunExperiment`, `ExperimentWindowSeconds`.
-Feature settings move to each feature's own `DrawGui`.
+Do not hand-roll `GUILayout` calls for settings. UMM generates the entire settings UI from
+`[Draw]` attributes on the fields, including hiding a feature's tuning values when its
+toggle is off. The installed `UnityModManager.dll` was inspected and exposes
+`DrawAttribute` with `Type`, `Label`, `Min`, `Max`, `Precision`, `VisibleOn`,
+`InvisibleOn`, `Box`, `Collapsible`, `Tooltip`; `DrawType` with `Toggle`, `Slider`,
+`ToggleGroup`, `PopupList`; and `DrawFieldMask` with `Public`, `Serialized`,
+`SkipNotSerialized`, `OnlyDrawAttr`.
 
-In `Main.OnGUI`, draw one group per feature:
+Annotate `Settings` so each feature reads as its own collapsible box, with its tuning
+values bound to its toggle via `VisibleOn`:
 
 ```csharp
-GUILayout.Label("Highball");
-GUILayout.Label(string.Format("Tracked: {0}   Moving: {1}",
-    _registry.TrackedCount, _evaluator.MovingCount));
+[Draw("Solver iteration LOD  [experimental]", Type = DrawType.Toggle,
+      Box = true, Collapsible = true,
+      Tooltip = "Lowers PhysX solver iterations on distant, steady rolling stock. "
+              + "Unproven: its only measurement so far showed no benefit.")]
+public bool EnableSolverLod = false;
 
-if (Settings.Instance.RunExperiment)
+[Draw("Low solver iterations", Type = DrawType.Slider, Min = 1, Max = 6,
+      VisibleOn = "EnableSolverLod|true")]
+public int LowSolverIterations = 2;
+
+[Draw("Sleep headroom probe (read-only)", Type = DrawType.Toggle,
+      Box = true, Collapsible = true,
+      Tooltip = "Measures how many cars are parked but still awake. Changes nothing.")]
+public bool EnableSleepHeadroomProbe = true;
+```
+
+Apply the same treatment to the core settings (`MinDistanceMeters`,
+`SteadyAccelThreshold`, `RequiredSteadySeconds`) and the experiment block
+(`RunExperiment`, `ExperimentWindowSeconds`, `ExperimentTarget`), using `Min`/`Max` that
+match the ranges the old sliders used.
+
+`Settings` still implements `IDrawable`; `OnChange()` is where UMM notifies you a value
+changed, and is the correct place to hook the release-on-disable logic below.
+
+- [ ] **Step 3: Render via UMM and release on disable**
+
+`Main.OnGUI` shrinks to live status plus one `DrawFields` call. The exact `DrawFields`
+signature could not be verified by reflection (the `UnityModManager.UI` type fails a
+reflection-only load because it pulls in UnityEngine), so treat the compile as the
+verification — if the signature differs in this UMM build, adjust to what compiles rather
+than working around it:
+
+```csharp
+private static void OnGUI(UnityModManager.ModEntry modEntry)
 {
-    GUILayout.Label(string.Format("Window: {0}   target: {1}   rows: {2}",
-        _telemetry.ActiveWindow ? "ACTIVE" : "BASELINE",
-        Settings.Instance.ExperimentTarget,
-        _telemetry.RowsWritten));
-}
+    GUILayout.Label(string.Format("Tracked: {0}   Moving: {1}",
+        _registry.TrackedCount, _evaluator.MovingCount));
 
-GUILayout.Space(8f);
-Settings.Instance.DrawGui();
-
-IFeature[] features = _host.Features;
-for (int i = 0; i < features.Length; i++)
-{
-    IFeature f = features[i];
-
-    GUILayout.Space(10f);
-    GUILayout.Label(f.DisplayName + (f.IsExperimental ? "   [experimental]" : ""));
-
-    bool wanted = GUILayout.Toggle(f.Enabled, "Enabled");
-    SetFeatureEnabled(f.Id, wanted);
-
-    if (!f.Enabled)
+    if (Settings.Instance.RunExperiment)
     {
-        continue;
+        GUILayout.Label(string.Format("Window: {0}   target: {1}   rows: {2}",
+            _telemetry.ActiveWindow ? "ACTIVE" : "BASELINE",
+            Settings.Instance.ExperimentTarget,
+            _telemetry.RowsWritten));
     }
 
-    f.DrawGui();
+    _probe.DrawStatus();
+
+    GUILayout.Space(8f);
+    UnityModManager.UI.DrawFields(ref Settings.Instance, modEntry,
+        DrawFieldMask.Public, Settings.Instance.OnChange);
 }
 ```
 
-Add a small `SetFeatureEnabled(string id, bool value)` in `Main` that writes the matching
-`Settings` field, and — critically — calls `f.ReleaseAll()` when a feature is switched
-from on to off, so nothing stays held:
+Releasing on disable is the one piece UMM cannot do for us, and skipping it would strand
+modified physics on every car a feature was holding. Hook it in `Settings.OnChange()`,
+which UMM calls whenever a drawn field changes:
 
 ```csharp
-private static void SetFeatureEnabled(string id, bool value)
+public void OnChange()
 {
-    Settings s = Settings.Instance;
-    bool before;
+    // A feature switched off must hand back everything it was holding. UMM tells us a
+    // value changed but not which, so ask every feature whether its toggle still agrees
+    // with what it is holding.
+    Main.ReleaseDisabledFeatures();
+}
+```
 
-    if (id == "solver_lod") { before = s.EnableSolverLod; s.EnableSolverLod = value; }
-    else if (id == "sleep_headroom") { before = s.EnableSleepHeadroomProbe; s.EnableSleepHeadroomProbe = value; }
-    else { return; }
-
-    if (before && !value)
+```csharp
+internal static void ReleaseDisabledFeatures()
+{
+    if (_host == null)
     {
-        IFeature f = _host.Find(id);
-        if (f != null) f.ReleaseAll();
+        return;
+    }
+
+    IFeature[] features = _host.Features;
+    for (int i = 0; i < features.Length; i++)
+    {
+        if (features[i].Enabled)
+        {
+            continue;
+        }
+
+        try
+        {
+            features[i].ReleaseAll();
+        }
+        catch (Exception ex)
+        {
+            Log("Feature '" + features[i].Id + "' threw from ReleaseAll(): " + ex);
+        }
     }
 }
 ```
 
-- [ ] **Step 3: Build**
+The per-feature try/catch is required here for the same reason it is required in
+`FeatureHost.ReleaseAll` and `Telemetry.ApplyMode`: one throwing feature must not prevent
+the others from releasing.
+
+- [ ] **Step 4: Drop `IFeature.DrawGui`**
+
+With settings declared as attributes, `DrawGui` no longer has settings to draw. Remove it
+from `IFeature` and from both implementations. Replace the probe's readout with a
+concrete `DrawStatus()` method on `SleepHeadroomProbe` — it is live measurement output,
+not a setting, so it stays hand-drawn:
+
+```csharp
+internal void DrawStatus()
+{
+    if (!Enabled)
+    {
+        return;
+    }
+
+    GUILayout.Label(string.Format(
+        "asleep {0}   stationary {1}   stationary+awake {2}   verdict: {3}",
+        _asleep, _stationary, _stationaryAwake,
+        Decisions.ClassifyHeadroom(_stationaryAwake, _tracked)));
+}
+```
+
+`SolverLodFeature` loses `DrawGui` outright; its one setting is now an attributed field.
+
+- [ ] **Step 5: Build**
 
 ```powershell
 .\src\Highball\build.ps1
@@ -1208,11 +1280,11 @@ private static void SetFeatureEnabled(string id, bool value)
 
 Expected: exit code 0.
 
-- [ ] **Step 4: Commit**
+- [ ] **Step 6: Commit**
 
 ```bash
 git add -A src/Highball
-git commit -m "Add per-feature settings and panel groups"
+git commit -m "Draw per-feature settings through UMM's attribute system"
 ```
 
 ---
