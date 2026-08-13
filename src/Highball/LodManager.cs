@@ -1,9 +1,4 @@
-using System;
 using System.Collections.Generic;
-using System.Reflection;
-using Model;
-using RollingStock;
-using UnityEngine;
 
 namespace Highball
 {
@@ -17,45 +12,27 @@ namespace Highball
     ///
     /// Safety model is restore-biased. Downgrades require sustained calm; restores are
     /// immediate and unconditional. Anything we are unsure about stays at full fidelity.
+    ///
+    /// Discovery lives in CarRegistry and per-pass facts live in Evaluator; this class
+    /// owns only the classification threshold and the solver-iteration action itself.
+    /// A later task moves the action into a feature.
     /// </summary>
     internal sealed class LodManager
     {
-        private sealed class CarState
-        {
-            public string Id;
-            public Car Car;
-            public Rigidbody Rigidbody;
-
-            public int OriginalSolverIterations;
-            public bool IsDowngraded;
-
-            public float LastSpeed;
-            public float SteadySeconds;
-        }
-
-        private readonly Dictionary<string, CarState> _byId = new Dictionary<string, CarState>();
-        private readonly List<CarState> _cars = new List<CarState>();
-
-        private FieldInfo _recordsField;
-        private FieldInfo _recordCarField;
+        private readonly CarRegistry _registry = new CarRegistry();
+        private readonly Evaluator _evaluator = new Evaluator();
 
         private float _refreshTimer;
         private float _evalTimer;
 
-        // Discovery diagnostics. The first version of this class reported zero tracked
-        // cars and logged nothing at all, which made the failure impossible to locate.
-        // Every discovery path now accounts for itself.
-        private bool _discoveryReported;
-        private int _diagRecords;
-        private int _diagRbOnRoot;
-        private int _diagRbInChildren;
-        private int _diagNoRigidbody;
-
         // Live counters, surfaced in the UMM panel and the experiment log.
-        internal int TrackedCount => _cars.Count;
+        internal int TrackedCount => _registry.TrackedCount;
         internal int DowngradedCount { get; private set; }
-        internal int MovingCount { get; private set; }
+        internal int MovingCount => _evaluator.MovingCount;
         internal int EligibleCount { get; private set; }
+
+        /// <summary>Exposed so Main can wire reaping back to Restore.</summary>
+        internal CarRegistry Registry => _registry;
 
         /// <summary>
         /// When false, every downgraded car is restored and none are downgraded again.
@@ -86,272 +63,75 @@ namespace Highball
             if (_refreshTimer >= Settings.Instance.RefreshIntervalSeconds)
             {
                 _refreshTimer = 0f;
-                RefreshCars();
+                _registry.Refresh();
             }
 
             if (_evalTimer >= Settings.Instance.EvaluateIntervalSeconds)
             {
                 float dt = _evalTimer;
                 _evalTimer = 0f;
-                Evaluate(dt);
-            }
-        }
-
-        // --- discovery ---
-
-        /// <summary>
-        /// Enumerates rolling stock via CarCuller's private record list. This mirrors how
-        /// RollingStock Optimizer finds cars; the game exposes no public equivalent.
-        /// </summary>
-        private void RefreshCars()
-        {
-            try
-            {
-                CarCuller culler = UnityEngine.Object.FindObjectOfType<CarCuller>();
-                if (culler == null)
-                {
-                    // Expected before the world finishes loading, but if it never resolves
-                    // we need to know rather than silently track nothing forever.
-                    ReportOnce("CarCuller not found in scene.");
-                    return;
-                }
-
-                if (_recordsField == null)
-                {
-                    _recordsField = typeof(CarCuller).GetField(
-                        "_records",
-                        BindingFlags.NonPublic | BindingFlags.Instance);
-
-                    if (_recordsField == null)
-                    {
-                        Main.Log("CarCuller._records not found; this game version is unsupported.");
-                        return;
-                    }
-                }
-
-                var records = _recordsField.GetValue(culler) as System.Collections.IList;
-                if (records == null)
-                {
-                    ReportOnce("CarCuller._records was null or not an IList.");
-                    return;
-                }
-
-                var seen = new HashSet<string>();
-
-                _diagRecords = records.Count;
-                _diagRbOnRoot = 0;
-                _diagRbInChildren = 0;
-                _diagNoRigidbody = 0;
-
-                foreach (object record in records)
-                {
-                    if (record == null)
-                    {
-                        continue;
-                    }
-
-                    if (_recordCarField == null)
-                    {
-                        _recordCarField = record.GetType().GetField(
-                            "Car", BindingFlags.Public | BindingFlags.Instance);
-
-                        if (_recordCarField == null)
-                        {
-                            ReportOnce("Culler record type " + record.GetType().FullName
-                                       + " has no public 'Car' field.");
-                            return;
-                        }
-                    }
-
-                    Car car = _recordCarField.GetValue(record) as Car;
-                    if (car == null || string.IsNullOrEmpty(car.id))
-                    {
-                        continue;
-                    }
-
-                    seen.Add(car.id);
-
-                    if (_byId.ContainsKey(car.id))
-                    {
-                        continue;
-                    }
-
-                    GameObject go = car.gameObject;
-
-                    // The body is not reliably on the car's root object. Fall back to a
-                    // child search before giving up, and record which path succeeded.
-                    Rigidbody rb = go != null ? go.GetComponent<Rigidbody>() : null;
-                    if (rb != null)
-                    {
-                        _diagRbOnRoot++;
-                    }
-                    else if (go != null)
-                    {
-                        rb = go.GetComponentInChildren<Rigidbody>(true);
-                        if (rb != null)
-                        {
-                            _diagRbInChildren++;
-                        }
-                    }
-
-                    if (rb == null)
-                    {
-                        _diagNoRigidbody++;
-                        continue;
-                    }
-
-                    var state = new CarState
-                    {
-                        Id = car.id,
-                        Car = car,
-                        Rigidbody = rb,
-                        OriginalSolverIterations = rb.solverIterations,
-                        IsDowngraded = false,
-                        LastSpeed = rb.velocity.magnitude,
-                        SteadySeconds = 0f
-                    };
-
-                    _cars.Add(state);
-                    _byId[car.id] = state;
-                }
-
-                // Drop cars that have left the world, restoring them first if we touched them.
-                for (int i = _cars.Count - 1; i >= 0; i--)
-                {
-                    CarState state = _cars[i];
-                    bool gone = state == null
-                                || state.Car == null
-                                || state.Rigidbody == null
-                                || !seen.Contains(state.Id);
-
-                    if (!gone)
-                    {
-                        continue;
-                    }
-
-                    if (state != null)
-                    {
-                        Restore(state);
-                        _byId.Remove(state.Id);
-                    }
-
-                    _cars.RemoveAt(i);
-                }
-
-                if (!_discoveryReported && _diagRecords > 0)
-                {
-                    _discoveryReported = true;
-                    Main.Log(string.Format(
-                        "Discovery: {0} culler records -> {1} tracked (rb on root: {2}, rb in children: {3}, no rigidbody: {4}).",
-                        _diagRecords, _cars.Count, _diagRbOnRoot, _diagRbInChildren, _diagNoRigidbody));
-                }
-            }
-            catch (Exception ex)
-            {
-                Main.Log("RefreshCars failed: " + ex);
-            }
-        }
-
-        private readonly HashSet<string> _reported = new HashSet<string>();
-
-        /// <summary>Logs a given message at most once per session, to keep hot paths quiet.</summary>
-        private void ReportOnce(string message)
-        {
-            if (_reported.Add(message))
-            {
-                Main.Log(message);
+                _evaluator.Evaluate(_registry.Cars, dt);
+                Classify();
             }
         }
 
         // --- classification ---
 
-        private void Evaluate(float deltaTime)
+        private void Classify()
         {
-            Camera cam = Camera.main;
-            if (cam == null)
-            {
-                return;
-            }
-
-            Vector3 eye = cam.transform.position;
+            IList<TrackedCar> cars = _registry.Cars;
             Settings s = Settings.Instance;
 
-            float minDistSq = s.MinDistanceMeters * s.MinDistanceMeters;
-
             int downgraded = 0;
-            int moving = 0;
             int eligible = 0;
 
-            for (int i = 0; i < _cars.Count; i++)
+            for (int i = 0; i < cars.Count; i++)
             {
-                CarState state = _cars[i];
-                if (state?.Rigidbody == null || state.Car == null)
+                TrackedCar car = cars[i];
+                if (car?.Rigidbody == null || car.Car == null)
                 {
                     continue;
                 }
 
-                Rigidbody rb = state.Rigidbody;
-
-                float speed = rb.velocity.magnitude;
-                float accel = Mathf.Abs(speed - state.LastSpeed) / Mathf.Max(deltaTime, 0.0001f);
-                state.LastSpeed = speed;
-
-                if (speed > s.MovingSpeedThreshold)
-                {
-                    moving++;
-                }
-
-                // Sustained calm is required before a downgrade; any jolt resets the clock.
-                // Coupling, braking and slack action all show up here as acceleration.
-                if (accel <= s.SteadyAccelThreshold)
-                {
-                    state.SteadySeconds += deltaTime;
-                }
-                else
-                {
-                    state.SteadySeconds = 0f;
-                }
-
-                float distSq = (rb.position - eye).sqrMagnitude;
-
+                // Distance and sustained calm are computed once by the Evaluator; here we
+                // only apply the threshold.
                 bool qualifies = Active
-                                 && distSq > minDistSq
-                                 && state.SteadySeconds >= s.RequiredSteadySeconds;
+                                 && car.Facts.Distance > s.MinDistanceMeters
+                                 && car.Facts.SteadySeconds >= s.RequiredSteadySeconds;
 
                 if (qualifies)
                 {
                     eligible++;
-                    Downgrade(state);
+                    Downgrade(car);
                 }
                 else
                 {
-                    Restore(state);
+                    Restore(car);
                 }
 
-                if (state.IsDowngraded)
+                if (car.IsDowngraded)
                 {
                     downgraded++;
                 }
             }
 
             DowngradedCount = downgraded;
-            MovingCount = moving;
             EligibleCount = eligible;
         }
 
         // --- apply / restore ---
 
-        private void Downgrade(CarState state)
+        private void Downgrade(TrackedCar car)
         {
-            if (state.IsDowngraded)
+            if (car.IsDowngraded)
             {
                 return;
             }
 
             try
             {
-                state.Rigidbody.solverIterations = Settings.Instance.LowSolverIterations;
-                state.IsDowngraded = true;
+                car.Rigidbody.solverIterations = Settings.Instance.LowSolverIterations;
+                car.IsDowngraded = true;
             }
             catch
             {
@@ -359,23 +139,29 @@ namespace Highball
             }
         }
 
-        private void Restore(CarState state)
+        /// <summary>
+        /// Restores a single car's solver iterations, if it was downgraded. Internal
+        /// rather than private because CarRegistry's reaping loop needs to call back into
+        /// it: a car leaving the world must be handed back before it is dropped, and
+        /// CarRegistry has no feature state of its own to do that with.
+        /// </summary>
+        internal void Restore(TrackedCar car)
         {
-            if (!state.IsDowngraded)
+            if (!car.IsDowngraded)
             {
                 return;
             }
 
             try
             {
-                state.Rigidbody.solverIterations = state.OriginalSolverIterations;
+                car.Rigidbody.solverIterations = car.OriginalSolverIterations;
             }
             catch
             {
                 // Same as above; nothing useful to do.
             }
 
-            state.IsDowngraded = false;
+            car.IsDowngraded = false;
         }
 
         /// <summary>
@@ -384,11 +170,12 @@ namespace Highball
         /// </summary>
         internal void RestoreAll()
         {
-            for (int i = 0; i < _cars.Count; i++)
+            IList<TrackedCar> cars = _registry.Cars;
+            for (int i = 0; i < cars.Count; i++)
             {
-                if (_cars[i] != null)
+                if (cars[i] != null)
                 {
-                    Restore(_cars[i]);
+                    Restore(cars[i]);
                 }
             }
 
@@ -398,8 +185,7 @@ namespace Highball
         internal void Clear()
         {
             RestoreAll();
-            _cars.Clear();
-            _byId.Clear();
+            _registry.Clear();
         }
     }
 }

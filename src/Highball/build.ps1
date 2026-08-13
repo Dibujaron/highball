@@ -49,6 +49,10 @@ $sources = @(
     (Join-Path $here "Main.cs"),
     (Join-Path $here "Settings.cs"),
     (Join-Path $here "Decisions.cs"),
+    (Join-Path $here "CarFacts.cs"),
+    (Join-Path $here "TrackedCar.cs"),
+    (Join-Path $here "CarRegistry.cs"),
+    (Join-Path $here "Evaluator.cs"),
     (Join-Path $here "LodManager.cs"),
     (Join-Path $here "Experiment.cs"),
     (Join-Path $here "Properties\AssemblyInfo.cs")

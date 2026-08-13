@@ -29,6 +29,11 @@ namespace Highball
             Settings.Instance = UnityModManager.ModSettings.Load<Settings>(modEntry);
 
             _lod = new LodManager();
+            // A car reaped by discovery may still be downgraded; hand it back to the
+            // solver action before it drops out of the table. CarRegistry has no
+            // feature state of its own, so it cannot do this itself.
+            _lod.Registry.OnCarRemoved = _lod.Restore;
+
             _experiment = new Experiment(_lod);
             _experiment.Init();
 
