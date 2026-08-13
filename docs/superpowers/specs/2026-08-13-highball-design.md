@@ -28,7 +28,8 @@ so that each feature carries its own evidence.
 
 1. One mod, many features, each independently toggleable and each declaring whether it is
    experimental or proven.
-2. Discover rolling stock correctly — the fix that `RailroaderStockOptimizer` gets wrong.
+2. Discover rolling stock correctly, including the child-rigidbody search without which
+   nothing is found at all.
 3. Determine whether forcing distant parked cars to sleep is a real lever, before building
    it as a shipped feature.
 4. Never leave the player's physics state modified when a feature is off.

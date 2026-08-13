@@ -54,23 +54,22 @@ prove 0→12 is free. That would need a stop-all-AI test.
 AE doesn't re-plan when it should — stands on its own, and is now known to be cheap to
 fix. Planning costs 0.23%, so it can afford to run *more* often and smarter.
 
-### RollingStock Optimizer is a no-op — confirmed
+### Rigidbody discovery: the body is not on the car's root
 
-The installed build is byte-identical to the latest release (MD5 `9346b04d…`), and its
-settings were tuned well past defaults. It still does nothing, because it looks for the
-car's `Rigidbody` on the root GameObject:
+A physics-LOD mod can only act on cars whose `Rigidbody` it can find, so we measured where
+the body actually lives. Our diagnostic reports **0 of 519 cars** with a rigidbody on the
+root GameObject; all 519 have one in a child.
+
+The practical consequence for anything built here: a root-only lookup
 
 ```csharp
-Rigidbody rb = go != null ? go.GetComponent<Rigidbody>() : null;
+Rigidbody rb = go.GetComponent<Rigidbody>();
 ```
 
-Our diagnostic proves **0 of 519 cars** have a rigidbody on the root; all 519 have it in a
-child. Every action path in that mod is gated behind `state.Rigidbody == null` (lines 299,
-552, 570), so it discovers 519 cars, logs "tracking 519 cars", and acts on none.
-
-**Open action:** a one-line upstream fix to `thebikwirm/RailroaderStockOptimizer` would fix
-rolling-stock performance for every user. User was asked about opening a PR; **not yet
-authorized** — do not open anything under their name without a clear go-ahead.
+resolves to null for every car in the save, and any action gated behind a non-null
+rigidbody then silently never runs. Discovery must fall back to
+`GetComponentInChildren<Rigidbody>(true)`, and must report which path succeeded so a
+zero-tracked result is visible rather than silent.
 
 ## Current work: `src/StockPhysicsLOD`
 
@@ -109,7 +108,7 @@ distributions rather than single samples.
 
 ## Decisions and constraints
 
-- **Unity Mod Manager, not Railloader** — user cites "politics" around Railloader.
+- **Unity Mod Manager, not Railloader** — a deliberate choice for this project.
 - **No dependency on Waypoint Queue**, not even soft.
 - GitHub repo to live under **`dibujaron`**. **Not yet created** — nothing pushed. Public
   vs private undecided.
@@ -150,7 +149,8 @@ The child search is essential; root-only returns null for every car.
    *rendering* work, not physics work. With 519 cars, MSLDecalPack and three livery packs,
    and Giraffe Lab's own release note about "adaptive decal culling… with many nearby train
    cars", this fits the evidence well.
-3. Upstream PR to RollingStock Optimizer (needs authorization).
+3. Whether forcing distant parked cars to sleep is a real lever, or whether PhysX already
+   auto-sleeps them. Gated behind a read-only headroom probe with a pre-agreed threshold.
 4. "Better AE" as a *correctness* mod: re-plan triggers, and switch contention between
    trains. Known affordable.
 5. Tree optimizer.
