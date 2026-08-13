@@ -168,11 +168,20 @@ namespace Highball
             IFeature[] features = _host.Features;
             for (int i = 0; i < features.Length; i++)
             {
+                // Set the flag before attempting release, so a throwing ReleaseAll can
+                // never prevent this or any later feature's Active flag from being set.
                 features[i].Active = value;
 
                 if (!value)
                 {
-                    features[i].ReleaseAll();
+                    try
+                    {
+                        features[i].ReleaseAll();
+                    }
+                    catch (Exception ex)
+                    {
+                        Main.Log("Feature '" + features[i].Id + "' threw from ReleaseAll(): " + ex);
+                    }
                 }
             }
         }
