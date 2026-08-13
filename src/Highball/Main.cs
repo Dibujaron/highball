@@ -142,11 +142,17 @@ namespace Highball
 
             if (Settings.Instance.RunExperiment)
             {
-                GUILayout.Label($"Experiment window: {(_telemetry.ActiveWindow ? "ACTIVE" : "BASELINE")}   rows: {_telemetry.RowsWritten}");
+                GUILayout.Label(string.Format("Experiment window: {0}   target: {1}   rows: {2}",
+                    _telemetry.ActiveWindow ? "ACTIVE" : "BASELINE",
+                    Settings.Instance.ExperimentTarget,
+                    _telemetry.RowsWritten));
             }
 
+            _probe.DrawStatus();
+
             GUILayout.Space(8f);
-            Settings.Instance.DrawGui();
+            UnityModManager.UI.DrawFields(ref Settings.Instance, modEntry,
+                DrawFieldMask.Public, Settings.Instance.OnChange);
         }
 
         private static void OnSaveGUI(UnityModManager.ModEntry modEntry)
@@ -169,6 +175,39 @@ namespace Highball
         public static void Log(string msg)
         {
             ModEntry?.Logger.Log("[Highball] " + msg);
+        }
+
+        /// <summary>
+        /// A feature switched off must hand back everything it was holding. UMM calls
+        /// Settings.OnChange whenever a drawn field changes but does not tell us which one,
+        /// so ask every feature whether its toggle still agrees with what it is holding.
+        /// Guarded against _host being null: OnChange can fire (e.g. from the settings file
+        /// being deserialized) before Load has finished constructing it.
+        /// </summary>
+        internal static void ReleaseDisabledFeatures()
+        {
+            if (_host == null)
+            {
+                return;
+            }
+
+            IFeature[] features = _host.Features;
+            for (int i = 0; i < features.Length; i++)
+            {
+                if (features[i].Enabled)
+                {
+                    continue;
+                }
+
+                try
+                {
+                    features[i].ReleaseAll();
+                }
+                catch (Exception ex)
+                {
+                    Log("Feature '" + features[i].Id + "' threw from ReleaseAll(): " + ex);
+                }
+            }
         }
     }
 }

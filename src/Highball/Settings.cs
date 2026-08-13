@@ -1,4 +1,3 @@
-using UnityEngine;
 using UnityModManagerNet;
 
 namespace Highball
@@ -10,38 +9,69 @@ namespace Highball
         // --- eligibility ---
 
         /// <summary>Cars closer than this to the camera are never touched.</summary>
+        [Draw("Min distance (m)", Type = DrawType.Slider, Min = 100, Max = 3000,
+              Precision = 0, Box = true, Collapsible = true,
+              Tooltip = "Cars closer than this to the camera are never touched.")]
         public float MinDistanceMeters = 500f;
 
         /// <summary>
         /// Acceleration (m/s^2) above which a car is considered "doing something" —
         /// coupling, braking, slack action — and is restored to full fidelity.
         /// </summary>
+        [Draw("Steady accel threshold (m/s^2)", Type = DrawType.Slider, Min = 0.05, Max = 3,
+              Precision = 2,
+              Tooltip = "Acceleration above which a car is considered \"doing something\" "
+                      + "(coupling, braking, slack action) and is restored to full fidelity.")]
         public float SteadyAccelThreshold = 0.5f;
 
         /// <summary>How long a car must stay calm before we downgrade it.</summary>
+        [Draw("Required steady time (s)", Type = DrawType.Slider, Min = 0.5, Max = 15,
+              Precision = 1,
+              Tooltip = "How long a car must stay calm before we downgrade it.")]
         public float RequiredSteadySeconds = 3f;
 
         /// <summary>Speed (m/s) above which a car counts as moving, for reporting only.</summary>
         public float MovingSpeedThreshold = 0.1f;
 
-        // --- the lever ---
-
-        /// <summary>PhysX solver iterations applied to eligible cars. Unity's default is 6.</summary>
-        public int LowSolverIterations = 2;
+        // --- features ---
 
         /// <summary>
-        /// Placeholder until Task 7 adds the full per-feature settings panel. Off by
-        /// default: SolverLodFeature is experimental and its only measurement so far was
-        /// inconclusive.
+        /// Experimental: its only measurement so far showed no benefit. Ships off.
         /// </summary>
+        [Draw("Solver iteration LOD  [experimental]", Type = DrawType.Toggle,
+              Box = true, Collapsible = true,
+              Tooltip = "Lowers PhysX solver iterations on distant, steady rolling stock. "
+                      + "Unproven: its only measurement so far showed no benefit.")]
         public bool EnableSolverLod = false;
+
+        /// <summary>PhysX solver iterations applied to eligible cars. Unity's default is 6.</summary>
+        [Draw("Low solver iterations", Type = DrawType.Slider, Min = 1, Max = 6, Precision = 0,
+              VisibleOn = "EnableSolverLod|true")]
+        public int LowSolverIterations = 2;
 
         /// <summary>
         /// Read-only sleep headroom probe. Answers, before any sleep code is written,
         /// whether forcing distant parked cars to sleep is worth building at all. On by
         /// default: it mutates nothing, so there is no cost to always measuring.
         /// </summary>
+        [Draw("Sleep headroom probe (read-only)", Type = DrawType.Toggle,
+              Box = true, Collapsible = true,
+              Tooltip = "Measures how many cars are parked but still awake. Changes nothing.")]
         public bool EnableSleepHeadroomProbe = true;
+
+        // --- reserved for StationarySleepFeature, gated on the headroom probe result ---
+
+        [Draw("Sleep min distance (m)", Type = DrawType.Slider, Min = 100, Max = 3000, Precision = 0,
+              VisibleOn = "EnableSleepHeadroomProbe|true",
+              Tooltip = "Reserved for StationarySleepFeature, which does not exist yet. "
+                      + "Has no effect until that feature is built.")]
+        public float SleepMinDistanceMeters = 500f;
+
+        [Draw("Required stationary time (s)", Type = DrawType.Slider, Min = 0.5, Max = 15, Precision = 1,
+              VisibleOn = "EnableSleepHeadroomProbe|true",
+              Tooltip = "Reserved for StationarySleepFeature, which does not exist yet. "
+                      + "Has no effect until that feature is built.")]
+        public float RequiredStationarySeconds = 5f;
 
         // --- cadence ---
 
@@ -54,8 +84,12 @@ namespace Highball
         /// Automatically alternate between baseline and active windows and log both,
         /// so the effect can be measured without the player running a protocol.
         /// </summary>
+        [Draw("Run A/B experiment (alternates every window)", Type = DrawType.Toggle,
+              Box = true, Collapsible = true)]
         public bool RunExperiment = true;
 
+        [Draw("Experiment window (s)", Type = DrawType.Slider, Min = 10, Max = 120, Precision = 0,
+              VisibleOn = "RunExperiment|true")]
         public float ExperimentWindowSeconds = 30f;
 
         /// <summary>
@@ -63,6 +97,9 @@ namespace Highball
         /// holds whatever its own Enabled toggle says, so an fps delta can be attributed to
         /// this one feature rather than to all of them at once.
         /// </summary>
+        [Draw("Experiment target (feature Id)", Type = DrawType.Field,
+              VisibleOn = "RunExperiment|true",
+              Tooltip = "The Id of the single feature the A/B harness alternates, e.g. 'solver_lod'.")]
         public string ExperimentTarget = "solver_lod";
 
         public override void Save(UnityModManager.ModEntry modEntry)
@@ -72,27 +109,10 @@ namespace Highball
 
         public void OnChange()
         {
-        }
-
-        public void DrawGui()
-        {
-            GUILayout.Label($"Min distance: {MinDistanceMeters:F0} m");
-            MinDistanceMeters = GUILayout.HorizontalSlider(MinDistanceMeters, 100f, 3000f);
-
-            GUILayout.Label($"Steady accel threshold: {SteadyAccelThreshold:F2} m/s²");
-            SteadyAccelThreshold = GUILayout.HorizontalSlider(SteadyAccelThreshold, 0.05f, 3f);
-
-            GUILayout.Label($"Required steady time: {RequiredSteadySeconds:F1} s");
-            RequiredSteadySeconds = GUILayout.HorizontalSlider(RequiredSteadySeconds, 0.5f, 15f);
-
-            GUILayout.Label($"Low solver iterations: {LowSolverIterations}");
-            LowSolverIterations = Mathf.RoundToInt(GUILayout.HorizontalSlider(LowSolverIterations, 1f, 6f));
-
-            GUILayout.Space(8f);
-            RunExperiment = GUILayout.Toggle(RunExperiment, "Run A/B experiment (alternates every window)");
-
-            GUILayout.Label($"Experiment window: {ExperimentWindowSeconds:F0} s");
-            ExperimentWindowSeconds = GUILayout.HorizontalSlider(ExperimentWindowSeconds, 10f, 120f);
+            // A feature switched off must hand back everything it was holding. UMM tells us
+            // a value changed but not which, so ask every feature whether its toggle still
+            // agrees with what it is holding.
+            Main.ReleaseDisabledFeatures();
         }
     }
 }

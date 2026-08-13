@@ -77,8 +77,13 @@ namespace Highball
             }
         }
 
-        public void DrawGui()
+        internal void DrawStatus()
         {
+            if (!Enabled)
+            {
+                return;
+            }
+
             GUILayout.Label(string.Format(
                 "asleep {0}   stationary {1}   stationary+awake {2}   verdict: {3}",
                 _asleep, _stationary, _stationaryAwake,

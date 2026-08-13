@@ -34,7 +34,5 @@ namespace Highball
 
         string[] TelemetryHeaders { get; }
         string[] TelemetryValues { get; }
-
-        void DrawGui();
     }
 }

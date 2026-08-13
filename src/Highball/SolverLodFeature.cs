@@ -89,12 +89,5 @@ namespace Highball
         {
             get { return new[] { _held.Count.ToString(System.Globalization.CultureInfo.InvariantCulture) }; }
         }
-
-        public void DrawGui()
-        {
-            GUILayout.Label(string.Format("Low solver iterations: {0}", Settings.Instance.LowSolverIterations));
-            Settings.Instance.LowSolverIterations = Mathf.RoundToInt(
-                GUILayout.HorizontalSlider(Settings.Instance.LowSolverIterations, 1f, 6f));
-        }
     }
 }
