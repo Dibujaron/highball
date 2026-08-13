@@ -29,6 +29,13 @@ namespace Highball
         /// <summary>PhysX solver iterations applied to eligible cars. Unity's default is 6.</summary>
         public int LowSolverIterations = 2;
 
+        /// <summary>
+        /// Placeholder until Task 7 adds the full per-feature settings panel. Off by
+        /// default: SolverLodFeature is experimental and its only measurement so far was
+        /// inconclusive.
+        /// </summary>
+        public bool EnableSolverLod = false;
+
         // --- cadence ---
 
         public float RefreshIntervalSeconds = 2f;

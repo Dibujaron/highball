@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using System.Globalization;
 using System.IO;
 using UnityEngine;
@@ -6,11 +7,15 @@ using UnityEngine;
 namespace Highball
 {
     /// <summary>
-    /// Alternates the LOD manager between baseline and active windows and records frame
+    /// Alternates every feature between baseline and active windows and records frame
     /// timings for each, so the effect can be measured without the player doing anything.
     ///
     /// Alternating rather than running one long A then one long B matters: it controls for
     /// whatever the player happens to be doing, which drifts over a session.
+    ///
+    /// This is a stopgap: it flips every feature's Active flag in lockstep and reports a
+    /// single aggregate "downgraded" count. A later task rewrites this into a proper
+    /// Telemetry component with a per-feature experiment target and per-feature columns.
     /// </summary>
     internal sealed class Experiment
     {
@@ -20,7 +25,9 @@ namespace Highball
         /// </summary>
         private const float SettleSeconds = 2f;
 
-        private readonly LodManager _lod;
+        private readonly FeatureHost _host;
+        private readonly CarRegistry _registry;
+        private readonly Evaluator _evaluator;
 
         private bool _activeWindow;
         private float _windowElapsed;
@@ -36,9 +43,11 @@ namespace Highball
         internal bool ActiveWindow => _activeWindow;
         internal int RowsWritten => _rowsWritten;
 
-        internal Experiment(LodManager lod)
+        internal Experiment(FeatureHost host, CarRegistry registry, Evaluator evaluator)
         {
-            _lod = lod;
+            _host = host;
+            _registry = registry;
+            _evaluator = evaluator;
         }
 
         internal void Init()
@@ -117,9 +126,9 @@ namespace Highball
                     _frames.ToString(CultureInfo.InvariantCulture),
                     avgFrameMs.ToString("F3", CultureInfo.InvariantCulture),
                     fps.ToString("F3", CultureInfo.InvariantCulture),
-                    _lod.TrackedCount.ToString(CultureInfo.InvariantCulture),
-                    _lod.MovingCount.ToString(CultureInfo.InvariantCulture),
-                    _lod.DowngradedCount.ToString(CultureInfo.InvariantCulture)
+                    _registry.TrackedCount.ToString(CultureInfo.InvariantCulture),
+                    _evaluator.MovingCount.ToString(CultureInfo.InvariantCulture),
+                    CountDowngraded().ToString(CultureInfo.InvariantCulture)
                 });
             }
 
@@ -131,19 +140,48 @@ namespace Highball
         private void SwitchMode()
         {
             _activeWindow = !_activeWindow;
-            _lod.SetActive(_activeWindow);
+            SetActive(_activeWindow);
             _settleRemaining = SettleSeconds;
         }
 
-        /// <summary>Used when the experiment is switched off: pin the manager on.</summary>
+        /// <summary>Used when the experiment is switched off: pin every feature on.</summary>
         internal void ForceActive(bool value)
         {
             _activeWindow = value;
-            _lod.SetActive(value);
+            SetActive(value);
             _frames = 0;
             _frameSeconds = 0f;
             _windowElapsed = 0f;
             _settleRemaining = SettleSeconds;
+        }
+
+        /// <summary>
+        /// Sets Active on every feature. A feature that is Enabled but not Active claims
+        /// nothing and releases everything, so a BASELINE window is a true control.
+        /// </summary>
+        private void SetActive(bool value)
+        {
+            IFeature[] features = _host.Features;
+            for (int i = 0; i < features.Length; i++)
+            {
+                features[i].Active = value;
+            }
+        }
+
+        private int CountDowngraded()
+        {
+            IList<TrackedCar> cars = _registry.Cars;
+            int count = 0;
+
+            for (int i = 0; i < cars.Count; i++)
+            {
+                if (cars[i] != null && cars[i].IsDowngraded)
+                {
+                    count++;
+                }
+            }
+
+            return count;
         }
 
         private void WriteRow(string[] cells)

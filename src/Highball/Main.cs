@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using UnityEngine;
 using UnityModManagerNet;
 
@@ -20,21 +21,33 @@ namespace Highball
         public static UnityModManager.ModEntry ModEntry;
         public static bool Enabled;
 
-        private static LodManager _lod;
+        private static CarRegistry _registry;
+        private static Evaluator _evaluator;
+        private static FeatureHost _host;
         private static Experiment _experiment;
+
+        private static float _refreshTimer;
+        private static float _evalTimer;
 
         public static bool Load(UnityModManager.ModEntry modEntry)
         {
             ModEntry = modEntry;
             Settings.Instance = UnityModManager.ModSettings.Load<Settings>(modEntry);
 
-            _lod = new LodManager();
-            // A car reaped by discovery may still be downgraded; hand it back to the
-            // solver action before it drops out of the table. CarRegistry has no
-            // feature state of its own, so it cannot do this itself.
-            _lod.Registry.OnCarRemoved = _lod.Restore;
+            _registry = new CarRegistry();
+            _evaluator = new Evaluator();
+            _host = new FeatureHost(new IFeature[]
+            {
+                // Priority order. Sleep, once it exists, goes ahead of solver LOD.
+                new SolverLodFeature()
+            });
 
-            _experiment = new Experiment(_lod);
+            // A car reaped by discovery may still be claimed by a feature; hand it back
+            // to every feature before it drops out of the table. CarRegistry has no
+            // feature state of its own, so it cannot do this itself.
+            _registry.OnCarRemoved = car => _host.ReleaseAll(car);
+
+            _experiment = new Experiment(_host, _registry, _evaluator);
             _experiment.Init();
 
             modEntry.OnToggle = OnToggle;
@@ -67,9 +80,10 @@ namespace Highball
             }
             else
             {
-                // Leaving downgraded rigidbodies behind would be a silent, persistent
+                // Leaving claimed rigidbodies behind would be a silent, persistent
                 // change to the player's save state. Always hand them back.
-                _lod.Clear();
+                _host.ReleaseAll();
+                _registry.Clear();
                 Log("Disabled, all cars restored.");
             }
 
@@ -85,7 +99,22 @@ namespace Highball
 
             try
             {
-                _lod.Tick(deltaTime);
+                _refreshTimer += deltaTime;
+                _evalTimer += deltaTime;
+
+                if (_refreshTimer >= Settings.Instance.RefreshIntervalSeconds)
+                {
+                    _refreshTimer = 0f;
+                    _registry.Refresh();
+                }
+
+                if (_evalTimer >= Settings.Instance.EvaluateIntervalSeconds)
+                {
+                    float dt = _evalTimer;
+                    _evalTimer = 0f;
+                    _evaluator.Evaluate(_registry.Cars, dt);
+                    _host.Apply(_registry.Cars);
+                }
 
                 if (Settings.Instance.RunExperiment)
                 {
@@ -96,14 +125,15 @@ namespace Highball
             {
                 Log("Tick failed, disabling to be safe: " + ex);
                 Enabled = false;
-                _lod.Clear();
+                _host.ReleaseAll();
+                _registry.Clear();
             }
         }
 
         private static void OnGUI(UnityModManager.ModEntry modEntry)
         {
             GUILayout.Label("Highball");
-            GUILayout.Label($"Tracked: {_lod.TrackedCount}   Moving: {_lod.MovingCount}   Downgraded: {_lod.DowngradedCount}");
+            GUILayout.Label($"Tracked: {_registry.TrackedCount}   Moving: {_evaluator.MovingCount}   Downgraded: {CountDowngraded()}");
 
             if (Settings.Instance.RunExperiment)
             {
@@ -121,9 +151,30 @@ namespace Highball
 
         private static bool OnUnload(UnityModManager.ModEntry modEntry)
         {
-            _lod?.Clear();
+            _host?.ReleaseAll();
+            _registry?.Clear();
             _experiment?.Shutdown();
             return true;
+        }
+
+        /// <summary>
+        /// Number of currently-claimed cars, for the panel. A stopgap until Task 6 gives
+        /// each feature its own telemetry column.
+        /// </summary>
+        private static int CountDowngraded()
+        {
+            IList<TrackedCar> cars = _registry.Cars;
+            int count = 0;
+
+            for (int i = 0; i < cars.Count; i++)
+            {
+                if (cars[i] != null && cars[i].IsDowngraded)
+                {
+                    count++;
+                }
+            }
+
+            return count;
         }
 
         public static void Log(string msg)
