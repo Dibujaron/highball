@@ -5,7 +5,7 @@ using Model;
 using RollingStock;
 using UnityEngine;
 
-namespace StockPhysicsLOD
+namespace Highball
 {
     /// <summary>
     /// Reduces PhysX solver iterations on rolling stock that is far away and in

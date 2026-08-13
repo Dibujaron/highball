@@ -3,7 +3,7 @@ using System.Globalization;
 using System.IO;
 using UnityEngine;
 
-namespace StockPhysicsLOD
+namespace Highball
 {
     /// <summary>
     /// Alternates the LOD manager between baseline and active windows and records frame
@@ -45,7 +45,7 @@ namespace StockPhysicsLOD
         {
             try
             {
-                CsvPath = Path.Combine(Application.persistentDataPath, "StockPhysicsLOD.csv");
+                CsvPath = Path.Combine(Application.persistentDataPath, "Highball.csv");
                 bool isNew = !File.Exists(CsvPath);
 
                 _writer = new StreamWriter(CsvPath, append: true) { AutoFlush = true };

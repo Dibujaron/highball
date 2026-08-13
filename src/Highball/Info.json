@@ -1,0 +1,10 @@
+{
+  "Id": "Highball",
+  "DisplayName": "Highball",
+  "Author": "dibujaron",
+  "Version": "0.2.0",
+  "ManagerVersion": "0.27.0",
+  "Requirements": [],
+  "AssemblyName": "Highball.dll",
+  "EntryMethod": "Highball.Main.Load"
+}

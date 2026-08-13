@@ -1,5 +1,5 @@
 <#
-    Builds StockPhysicsLOD against the Mono BCL that Railroader ships, avoiding any
+    Builds Highball against the Mono BCL that Railroader ships, avoiding any
     need for a .NET Framework targeting pack.
 
     Usage:
@@ -24,7 +24,7 @@ if (-not (Test-Path $csc)) { throw "Roslyn compiler not found at $csc" }
 
 $outDir = Join-Path $here "bin\Release"
 New-Item -ItemType Directory -Force -Path $outDir | Out-Null
-$outDll = Join-Path $outDir "StockPhysicsLOD.dll"
+$outDll = Join-Path $outDir "Highball.dll"
 
 $refs = @(
     "mscorlib.dll",
@@ -48,6 +48,7 @@ $refs = @(
 $sources = @(
     (Join-Path $here "Main.cs"),
     (Join-Path $here "Settings.cs"),
+    (Join-Path $here "Decisions.cs"),
     (Join-Path $here "LodManager.cs"),
     (Join-Path $here "Experiment.cs"),
     (Join-Path $here "Properties\AssemblyInfo.cs")
@@ -59,13 +60,13 @@ $cscArgs = @(
     "-out:$outDll"
 ) + $refs + $sources
 
-Write-Host "Compiling StockPhysicsLOD..."
+Write-Host "Compiling Highball..."
 & $csc $cscArgs
 if ($LASTEXITCODE -ne 0) { throw "Compilation failed with exit code $LASTEXITCODE" }
 Write-Host "Built $outDll"
 
 if ($Deploy) {
-    $dest = Join-Path $RailroaderDir "Mods\StockPhysicsLOD"
+    $dest = Join-Path $RailroaderDir "Mods\Highball"
     New-Item -ItemType Directory -Force -Path $dest | Out-Null
     Copy-Item $outDll $dest -Force
     Copy-Item (Join-Path $here "Info.json") $dest -Force

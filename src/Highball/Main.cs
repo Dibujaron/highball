@@ -2,7 +2,7 @@ using System;
 using UnityEngine;
 using UnityModManagerNet;
 
-namespace StockPhysicsLOD
+namespace Highball
 {
     /// <summary>
     /// Rolling Stock Physics LOD.
@@ -97,7 +97,7 @@ namespace StockPhysicsLOD
 
         private static void OnGUI(UnityModManager.ModEntry modEntry)
         {
-            GUILayout.Label("Rolling Stock Physics LOD");
+            GUILayout.Label("Highball");
             GUILayout.Label($"Tracked: {_lod.TrackedCount}   Moving: {_lod.MovingCount}   Downgraded: {_lod.DowngradedCount}");
 
             if (Settings.Instance.RunExperiment)
@@ -123,7 +123,7 @@ namespace StockPhysicsLOD
 
         public static void Log(string msg)
         {
-            ModEntry?.Logger.Log("[StockPhysicsLOD] " + msg);
+            ModEntry?.Logger.Log("[Highball] " + msg);
         }
     }
 }

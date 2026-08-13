@@ -1,7 +1,7 @@
 using UnityEngine;
 using UnityModManagerNet;
 
-namespace StockPhysicsLOD
+namespace Highball
 {
     public class Settings : UnityModManager.ModSettings, IDrawable
     {
