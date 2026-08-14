@@ -27,7 +27,6 @@ namespace Highball
         private static FrameBudgetProbe _budget;
         private static ScriptAttributionProbe _scripts;
         private static RenderInventoryProbe _renderInventory;
-        private static InstancingFeature _instancing;
         private static Harmony _harmony;
 
         private static float _refreshTimer;
@@ -43,7 +42,6 @@ namespace Highball
             _budget = new FrameBudgetProbe();
             _scripts = new ScriptAttributionProbe();
             _renderInventory = new RenderInventoryProbe(_registry.Cars);
-            _instancing = new InstancingFeature(_registry.Cars);
             _host = new FeatureHost(new IFeature[]
             {
                 // Priority order == claim order: FeatureHost.Apply offers each car to
@@ -55,8 +53,6 @@ namespace Highball
                 // doesn't affect arbitration. Kept after the car-acting features so
                 // priority order stays readable.
                 new TerrainLodFeature(),
-                // Acts on materials, not cars; never claims either.
-                _instancing,
                 // Read-only and never claim. Kept last so mutating features stay first.
                 _budget,
                 _scripts,
@@ -241,11 +237,6 @@ namespace Highball
         internal static string RenderInventoryStatus()
         {
             return _renderInventory != null ? _renderInventory.StatusLine() : "n/a";
-        }
-
-        internal static string GpuInstancingStatus()
-        {
-            return _instancing != null ? _instancing.StatusLine() : "n/a";
         }
 
         /// <summary>
