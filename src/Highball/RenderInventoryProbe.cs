@@ -181,6 +181,8 @@ namespace Highball
             sb.AppendLine("RenderInventory: one-shot census (toggle off and on to re-run).");
             Describe(sb, "cars (" + carsWalked + " walked)", carTally);
             Describe(sb, "scene-wide", sceneTally);
+            DescribePipeline(sb);
+            DescribeTopShaders(sb, sceneTally);
             Main.Log(sb.ToString());
 
             int instancing = CountInstancing(sceneTally.Materials);
@@ -267,6 +269,148 @@ namespace Highball
             }
 
             sb.AppendLine();
+        }
+
+        /// <summary>
+        /// Which render pipeline is active, and — the question that decides where the
+        /// zero-batching problem lives — whether the SRP Batcher is on. The first census's
+        /// "(Builtin)" shader-name suffix briefly suggested the car shader was a
+        /// builtin-pipeline shader and therefore SRP-Batcher-incompatible; that theory was
+        /// retracted (a truly builtin shader would render magenta under URP — the suffix is
+        /// just part of the shader's name). Note that batches == draw_calls in the legacy
+        /// profiler counters is CONSISTENT with the SRP Batcher being on: it reduces
+        /// per-draw setup cost, not draw count. Only reading the flag settles it.
+        ///
+        /// All property reads go through reflection so a URP version mismatch degrades to
+        /// "unreadable" instead of throwing, and the whole section is guarded so a failure
+        /// here can never cost the rest of the census.
+        /// </summary>
+        private static void DescribePipeline(StringBuilder sb)
+        {
+            try
+            {
+                UnityEngine.Rendering.RenderPipelineAsset asset =
+                    UnityEngine.Rendering.GraphicsSettings.currentRenderPipeline;
+
+                if (asset == null)
+                {
+                    sb.AppendLine("  [pipeline] none (built-in render pipeline)");
+                    return;
+                }
+
+                Type t = asset.GetType();
+                sb.Append(string.Format(CultureInfo.InvariantCulture,
+                    "  [pipeline] {0} \"{1}\"", t.Name, asset.name));
+
+                AppendReflectedBool(sb, asset, t, "useSRPBatcher");
+                AppendReflectedBool(sb, asset, t, "supportsHDR");
+
+                sb.AppendLine();
+            }
+            catch (Exception ex)
+            {
+                sb.AppendLine("  [pipeline] unreadable: " + ex.Message);
+            }
+        }
+
+        private static void AppendReflectedBool(StringBuilder sb, object target, Type type, string property)
+        {
+            try
+            {
+                var prop = type.GetProperty(property);
+                if (prop == null)
+                {
+                    sb.Append("  ").Append(property).Append("=?");
+                    return;
+                }
+
+                sb.Append("  ").Append(property).Append('=').Append(prop.GetValue(target, null));
+            }
+            catch (Exception ex)
+            {
+                sb.Append("  ").Append(property).Append("=unreadable(").Append(ex.Message).Append(')');
+            }
+        }
+
+        /// <summary>
+        /// Property lists for the top shaders by unique-material count, answering how
+        /// replaceable each is: a swap-in shader must serve the same property names the
+        /// game's materials already carry, so this list is the interface a replacement
+        /// would have to honour. Also reports whether Shader.Find resolves the name —
+        /// a shader reachable by Find is one a mod can obtain a live reference to.
+        /// </summary>
+        private static void DescribeTopShaders(StringBuilder sb, ScopeTally t)
+        {
+            try
+            {
+                var byShader = new Dictionary<Shader, int>();
+                foreach (Material m in t.Materials)
+                {
+                    try
+                    {
+                        Shader s = m != null ? m.shader : null;
+                        if (s == null)
+                        {
+                            continue;
+                        }
+
+                        int count;
+                        byShader.TryGetValue(s, out count);
+                        byShader[s] = count + 1;
+                    }
+                    catch
+                    {
+                    }
+                }
+
+                var top = new List<KeyValuePair<Shader, int>>(byShader);
+                top.Sort((x, y) => y.Value.CompareTo(x.Value));
+
+                for (int i = 0; i < top.Count && i < 3; i++)
+                {
+                    Shader s = top[i].Key;
+                    if (s == null)
+                    {
+                        continue;
+                    }
+
+                    bool findable;
+                    try
+                    {
+                        findable = Shader.Find(s.name) != null;
+                    }
+                    catch
+                    {
+                        findable = false;
+                    }
+
+                    int propCount = s.GetPropertyCount();
+                    int shown = Math.Min(propCount, 25);
+
+                    sb.Append(string.Format(CultureInfo.InvariantCulture,
+                        "  [shader] {0}  Find={1}  props {2}/{3}:",
+                        s.name, findable ? "yes" : "NO", shown, propCount));
+
+                    for (int p = 0; p < shown; p++)
+                    {
+                        try
+                        {
+                            sb.Append(' ').Append(s.GetPropertyName(p))
+                              .Append('(').Append(s.GetPropertyType(p)).Append(')');
+                        }
+                        catch
+                        {
+                            sb.Append(" (unreadable)");
+                        }
+                    }
+
+                    sb.AppendLine();
+                }
+            }
+            catch (Exception ex)
+            {
+                sb.AppendLine("  [shader] census unreadable: " + ex.Message);
+            }
         }
 
         /// <summary>Nothing held, nothing to hand back — but a toggle-off re-arms the walk.</summary>
