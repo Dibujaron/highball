@@ -47,7 +47,13 @@ namespace Highball
         private sealed class Bucket
         {
             internal readonly string Column;
+
+            /// <summary>
+            /// Name of the player-loop system whose child we are timing, or null to time a
+            /// direct child of the root — i.e. one of the eight top-level phases.
+            /// </summary>
             internal readonly string Parent;
+
             internal readonly string Child;
 
             /// <summary>Timestamp taken by the "before" marker, read by the "after" marker.</summary>
@@ -67,16 +73,44 @@ namespace Highball
         }
 
         /// <summary>
-        /// The subsystems worth timing, grouped so the three-way question can be answered by
-        /// summing. Everything here runs on the main thread; gfx jobs are enabled on this
-        /// install (`gfx-enable-native-gfx-jobs=1` in boot.config), so worker-thread render
-        /// work is NOT captured — if the main thread is not the bottleneck, that shows up
-        /// here as time unaccounted for rather than as a bucket.
+        /// Two tiers. The `total_*` buckets wrap the eight top-level phases, so their sum is
+        /// the whole main-thread frame by construction and anything missing is time spent
+        /// outside the player loop entirely — that turns "unaccounted" from a 42% mystery
+        /// into a number that should be near zero. Everything after them breaks those phases
+        /// down, and a detail bucket is always a subset of its own `total_` bucket, never
+        /// additional to it: do not sum across the two tiers.
+        ///
+        /// The first run of this probe measured 13 detail buckets and left 42% of the frame
+        /// unexplained, which made "scripts are the biggest cost" true only of the part that
+        /// was visible. Hence the totals.
+        ///
+        /// Everything here runs on the main thread; gfx jobs are enabled on this install
+        /// (`gfx-enable-native-gfx-jobs=1` in boot.config), so worker-thread render work is
+        /// not captured directly — it shows up as main-thread time spent waiting in
+        /// `gfx_jobs_end_ms` or `wait_present_ms`.
         /// </summary>
         private static Bucket[] MakeBuckets()
         {
             return new[]
             {
+                // --- tier 1: the whole frame, by construction ---
+                new Bucket("total_time_ms", null, "TimeUpdate"),
+                new Bucket("total_init_ms", null, "Initialization"),
+                new Bucket("total_early_ms", null, "EarlyUpdate"),
+                new Bucket("total_fixed_ms", null, "FixedUpdate"),
+                new Bucket("total_pre_ms", null, "PreUpdate"),
+                new Bucket("total_update_ms", null, "Update"),
+                new Bucket("total_prelate_ms", null, "PreLateUpdate"),
+                new Bucket("total_postlate_ms", null, "PostLateUpdate"),
+
+                // --- tier 2: breakdown ---
+
+                // The other place a GPU wait can hide. present_ms read ~0 on the first run,
+                // which looked like a clean CPU-bound verdict, but this subsystem was
+                // unmeasured and it is where Unity blocks on the previous frame's
+                // presentation. Until this reads low too, "not GPU-bound" is not established.
+                new Bucket("wait_present_ms", "TimeUpdate", "WaitForLastPresentationAndUpdateTime"),
+
                 new Bucket("phys_fixed_ms", "FixedUpdate", "PhysicsFixedUpdate"),
                 new Bucket("phys_update_ms", "PreUpdate", "PhysicsUpdate"),
                 new Bucket("phys_late_ms", "PreLateUpdate", "PhysicsLateUpdate"),
@@ -91,6 +125,28 @@ namespace Highball
                 new Bucket("rend_particles_ms", "PostLateUpdate", "ParticleSystemEndUpdateAll"),
                 new Bucket("rend_canvas_ms", "PostLateUpdate", "PlayerUpdateCanvases"),
                 new Bucket("cull_notify_ms", "EarlyUpdate", "RendererNotifyInvisible"),
+
+                // Where the main thread pays for native graphics jobs it cannot proceed
+                // without. With gfx jobs on, this is how worker-thread render cost becomes
+                // visible from the main thread at all.
+                new Bucket("gfx_jobs_end_ms", "PostLateUpdate", "EndGraphicsJobsAfterScriptLateUpdate"),
+
+                // Wheel and rod animation across 519 cars is a plausible chunk of the
+                // frame, and none of it was measured on the first run.
+                new Bucket("anim_legacy_ms", "PreLateUpdate", "LegacyAnimationUpdate"),
+                new Bucket("anim_begin_ms", "PreLateUpdate", "DirectorUpdateAnimationBegin"),
+                new Bucket("anim_end_ms", "PreLateUpdate", "DirectorUpdateAnimationEnd"),
+
+                new Bucket("ui_recttransform_ms", "PostLateUpdate", "UpdateRectTransform"),
+                new Bucket("ui_canvas_geom_ms", "PostLateUpdate", "PlayerEmitCanvasGeometry"),
+                new Bucket("audio_ms", "PostLateUpdate", "UpdateAudio"),
+
+                // Texture upload and streaming: this install carries a decal pack and three
+                // livery packs, so it is worth ruling in or out rather than assuming.
+                new Bucket("async_upload_ms", "Initialization", "AsyncUploadTimeSlicedUpdate"),
+                new Bucket("streaming_ms", "EarlyUpdate", "UpdateStreamingManager"),
+                new Bucket("tex_streaming_ms", "EarlyUpdate", "UpdateTextureStreamingManager"),
+                new Bucket("main_jobs_ms", "EarlyUpdate", "ExecuteMainThreadJobs"),
 
                 // Where an uncapped-but-GPU-bound frame parks itself. Separating it matters:
                 // without it, waiting on the GPU would be invisible and the CPU would look
@@ -158,9 +214,18 @@ namespace Highball
                 }
 
                 var byParent = new Dictionary<string, List<Bucket>>();
+                var rootBuckets = new List<Bucket>();
+
                 for (int i = 0; i < _buckets.Length; i++)
                 {
                     Bucket b = _buckets[i];
+
+                    if (b.Parent == null)
+                    {
+                        rootBuckets.Add(b);
+                        continue;
+                    }
+
                     List<Bucket> list;
                     if (!byParent.TryGetValue(b.Parent, out list))
                     {
@@ -171,14 +236,14 @@ namespace Highball
                     list.Add(b);
                 }
 
-                // One extra slot for the frame counter, appended at root level so it runs
-                // exactly once per frame after everything else.
-                var newRoot = new PlayerLoopSystem[rootList.Length + 1];
-
+                // Pass 1: rewrite the children of each top-level phase that has detail
+                // buckets. Must happen before pass 2, so the phase entries pass 2 wraps
+                // already carry their own inner markers.
+                var phases = new PlayerLoopSystem[rootList.Length];
                 for (int i = 0; i < rootList.Length; i++)
                 {
-                    // A struct copy: assigning to sys.subSystemList below rewrites this
-                    // local, never the element inside the original array.
+                    // A struct copy: assigning to sys.subSystemList rewrites this local,
+                    // never the element inside the original array.
                     PlayerLoopSystem sys = rootList[i];
 
                     List<Bucket> wanted;
@@ -189,10 +254,19 @@ namespace Highball
                         sys.subSystemList = InsertMarkers(sys.subSystemList, wanted);
                     }
 
-                    newRoot[i] = sys;
+                    phases[i] = sys;
                 }
 
-                newRoot[rootList.Length] = new PlayerLoopSystem
+                // Pass 2: wrap the phases themselves, using the same helper with the root
+                // as the parent. A phase's total therefore CONTAINS its detail buckets
+                // rather than sitting alongside them.
+                PlayerLoopSystem[] wrapped = InsertMarkers(phases, rootBuckets);
+
+                // Pass 3: the frame counter, last at root level so it runs exactly once per
+                // frame after everything else.
+                var newRoot = new PlayerLoopSystem[wrapped.Length + 1];
+                Array.Copy(wrapped, newRoot, wrapped.Length);
+                newRoot[wrapped.Length] = new PlayerLoopSystem
                 {
                     type = typeof(HighballFrameMarker),
                     updateDelegate = CountFrame
@@ -293,7 +367,7 @@ namespace Highball
             {
                 if (!_buckets[i].Installed)
                 {
-                    missing.Add(_buckets[i].Parent + "." + _buckets[i].Child);
+                    missing.Add((_buckets[i].Parent ?? "root") + "." + _buckets[i].Child);
                 }
             }
 
@@ -508,28 +582,32 @@ namespace Highball
                 return "installed, waiting for the first frame";
             }
 
-            double physics = 0, scripts = 0, render = 0;
+            double physics = 0, scripts = 0, render = 0, loop = 0;
             for (int i = 0; i < _buckets.Length; i++)
             {
                 Bucket b = _buckets[i];
                 double ms = ToMs(b.Accum);
 
-                if (b.Column.StartsWith("phys_")) physics += ms;
+                // total_* is the tier-1 whole-frame total and must not be added to the
+                // tier-2 groups it contains; it is summed separately as `loop`.
+                if (b.Column.StartsWith("total_")) loop += ms;
+                else if (b.Column.StartsWith("phys_")) physics += ms;
                 else if (b.Column.StartsWith("script_")) scripts += ms;
                 else if (b.Column.StartsWith("rend_") || b.Column.StartsWith("cull_")) render += ms;
             }
 
             return string.Format(CultureInfo.InvariantCulture,
-                "physics {0:F2}   render {1:F2}   scripts {2:F2}   present {3:F2}  (ms/frame)",
+                "phys {0:F2}  rend {1:F2}  scripts {2:F2}  gpu-wait {3:F2}  whole loop {4:F2}  (ms/frame)",
                 physics / _frames, render / _frames, scripts / _frames,
-                ToMs(PresentTicks()) / _frames);
+                (ToMs(BucketTicks("present_ms")) + ToMs(BucketTicks("wait_present_ms"))) / _frames,
+                loop / _frames);
         }
 
-        private long PresentTicks()
+        private long BucketTicks(string column)
         {
             for (int i = 0; i < _buckets.Length; i++)
             {
-                if (_buckets[i].Column == "present_ms") return _buckets[i].Accum;
+                if (_buckets[i].Column == column) return _buckets[i].Accum;
             }
 
             return 0;
