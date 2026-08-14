@@ -53,6 +53,18 @@ namespace Highball
                       + "more CPU; this is a performance mod, so 0 would defeat its own purpose.")]
         public float EvaluateIntervalSeconds = 0.25f;
 
+        // --- diagnostics ---
+
+        /// <summary>
+        /// Read-only, but the most invasive thing here: it inserts timing markers into
+        /// Unity's player loop. Ships off, and hands the loop back on toggle-off and unload.
+        /// </summary>
+        [Draw("Frame budget probe (read-only)", Type = DrawType.Toggle, Box = true, Collapsible = true,
+              Tooltip = "Measures where the frame goes — physics vs rendering vs scripts — by timing "
+                      + "Unity's player-loop subsystems. Changes no game state, but does insert markers "
+                      + "into the update loop, so it ships off. Feeds extra telemetry columns.")]
+        public bool EnableFrameBudgetProbe = false;
+
         // --- telemetry ---
 
         /// <summary>

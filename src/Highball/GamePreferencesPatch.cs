@@ -207,6 +207,21 @@ namespace Highball
 
                 panel.Spacer(16f);
 
+                panel.AddSection("Diagnostics", b =>
+                {
+                    b.AddFieldToggle("Frame budget probe", () => s.EnableFrameBudgetProbe,
+                        v => { s.EnableFrameBudgetProbe = v; s.OnChange(); }, true)
+                     .Tooltip("Frame budget probe (read-only)",
+                        "Measures where the frame goes — physics vs rendering vs scripts — by timing "
+                        + "Unity's player-loop subsystems. Changes no game state, but does insert "
+                        + "markers into the update loop. Feeds extra telemetry columns.");
+
+                    b.AddField("Per frame", () => Main.FrameBudgetStatus(),
+                        UIPanelBuilder.Frequency.Periodic);
+                }, 8f);
+
+                panel.Spacer(16f);
+
                 panel.AddSection("Telemetry", b =>
                 {
                     IConfigurableElement interval = null;

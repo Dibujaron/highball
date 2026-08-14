@@ -40,6 +40,7 @@ they had. Their code is in the git history if the question ever reopens.
 | --- | --- | --- | --- |
 | Tree & ground detail LOD | `terrain_lod` | Experimental, **off** by default | Draws distant trees as batched billboards and shortens ground-detail draw distance. Never changes density — the forest stays as thick as you set it. Unmeasured in-game; the rendering-CPU hypothesis it targets is the current lead but is not yet confirmed. |
 | Car renderer LOD | `car_renderer_lod` | Experimental, **off** by default | Stops distant rolling stock from casting shadows. Cars never disappear or change shape. Unmeasured in-game, for the same reason as above. |
+| Frame budget probe | `frame_budget` | Read-only diagnostic, **off** by default | Times Unity's player-loop subsystems to say where the frame actually goes — physics, rendering, scripts, or waiting on the GPU. Changes no game state, but it is the most invasive code here: it inserts timing markers into the update loop. See below. |
 
 **The mod modifies PhysX and renderer state only at runtime and never persists any change
 to the save file.** Everything a feature claims is handed back on toggle-off and on mod
@@ -129,6 +130,47 @@ since either changes what the columns or the numbers themselves mean.
 To compare a feature against itself, record with it off, then with it on, and compare the
 two files. An earlier version of this mod automated that as an alternating A/B harness; it
 was removed once the hypotheses it was built to test had all been answered.
+
+## The frame budget probe
+
+Four hypotheses in a row were killed by building a bespoke instrument for each one. This is
+the general instrument that should have come first: it answers *where the frame goes*
+rather than *is this one guess right*.
+
+Unity's main-thread frame is a tree of player-loop subsystems, and `PlayerLoop` exposes it.
+A native subsystem has no managed delegate to wrap — it's a raw function pointer — so the
+probe replaces nothing. It inserts its own marker systems immediately before and after each
+subsystem of interest and times the gap: two `Stopwatch` timestamps per measured subsystem
+per frame, roughly half a microsecond against a 20 ms frame.
+
+It only ever *inserts* markers, never removes or reorders an existing entry, and never
+mutates an existing array in place. On toggle-off it restores by stripping its own markers
+out of whatever the loop looks like at that moment, rather than reverting to a saved copy,
+so a different mod that changed the loop afterwards doesn't get clobbered.
+
+Its columns are **cumulative**, like `renderers_touched` — difference two rows to get the
+ms-per-frame spent in each subsystem over that window:
+
+```python
+df = pd.read_csv(path, comment="#")
+ms = df.filter(regex="_ms$").diff().div(df.budget_frames.diff(), axis=0)
+```
+
+Cumulative rather than per-window averages on purpose: `Telemetry` reads `TelemetryValues`
+more than once per row when a file rolls over, so a getter that reset its own accumulators
+would report zeros for exactly the row that rolled over.
+
+Buckets are grouped by prefix — `phys_*`, `script_*`, `rend_*`, plus `cull_notify_ms` and
+`present_ms`. `present_ms` is separated deliberately: it's where an uncapped but GPU-bound
+frame parks itself, and without it, waiting on the GPU would be invisible and the CPU would
+look slower than it is. Anything left over after subtracting every bucket from
+`avg_frame_ms` is main-thread time the probe doesn't cover, or work that ran on a render
+worker thread — this install has `gfx-enable-native-gfx-jobs=1`, so worker-thread render
+work is *not* captured here.
+
+The `draw_calls`, `setpass_calls`, `batches` and `triangles` columns come from
+`ProfilerRecorder`. Those counters are usually stripped from non-development players, so
+they may read `na` — the log records whether they came back valid at startup.
 
 ## Prior art
 

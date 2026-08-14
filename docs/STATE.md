@@ -259,13 +259,30 @@ Tree LOD and `detailObjectDistance` were the previous lead; both are built, both
 and neither has shown a measurable gain. They stay available but are no longer the thread
 to pull.
 
-## Profile the game — decided 2026-08-14, this is the next work
+## Profile the game — decided 2026-08-14, route 4 BUILT
 
 Four hypotheses have now been killed by building bespoke instrumentation for each one. A
 profiler would have answered all four in an afternoon. Agreed on 2026-08-14 to do this
 before any further hypothesis.
 
-Nothing needed is installed yet, verified on 2026-08-14: no AMD μProf, no Unity Editor or
+**Route 4 is built and shipped** as `FrameBudgetProbe` (`frame_budget`, off by default) —
+see the README. It times Unity's player-loop subsystems by inserting marker systems around
+each one, needs no download, works in the release player, and reports physics / rendering /
+scripts / present as cumulative telemetry columns. Start here; the routes below are the
+follow-ups for when it says *which* subsystem and you need to know *where inside it*.
+
+Two corrections to what this section previously assumed, both verified 2026-08-14:
+
+- **Route 3 is dead.** `mono-2.0-bdwgc.dll` contains no `profiler-log`, `log:report` or
+  `sample-freq` strings — Unity stripped the log profiler out of its runtime build. Don't
+  spend an afternoon on it.
+- **Route 1 is weaker than claimed below.** The game root holds exactly two DLLs,
+  `UnityPlayer.dll` and `winhttp.dll`. Modern Unity links PhysX *into* `UnityPlayer.dll`,
+  so module-level attribution cannot separate physics from rendering — they are the same
+  binary — and without symbols for it, samples resolve to `UnityPlayer.dll+0x...` for both.
+  Still worth doing, but it will not cleanly settle rendering-vs-physics on its own.
+
+Nothing else needed is installed, verified on 2026-08-14: no AMD μProf, no Unity Editor or
 standalone profiler, and only VS 2019 Build Tools (no full Visual Studio, so no VS
 performance profiler either). Every route below therefore starts with a download.
 
@@ -288,17 +305,18 @@ Four routes, cheapest first:
 2. **Unity Profiler attach.** Add `player-connection-debug=1` to `boot.config` and attach
    the standalone Unity Profiler over localhost. Gives real Unity markers and a proper
    timeline. Back up `boot.config` first; unverified whether this build honours it.
-3. **Mono's own log profiler.** Because it is Mono, `MONO_ENV_OPTIONS=--profile=log:...`
-   may produce a managed-side profile readable with `mprof-report`. Most invasive, most
-   detailed on the C# side.
-4. **In-mod counters via `ProfilerRecorder`.** Unity 2022 can read built-in counters —
-   draw calls, batches, SetPass calls, triangles — from a player build at runtime. Feeding
-   those into Highball's existing CSV would measure the *mechanism* the rendering features
-   target rather than fps, which is a noisy proxy. Needs verification that these counters
-   survive in a non-development player.
+3. ~~**Mono's own log profiler.**~~ **Dead** — the log profiler is not compiled into
+   Unity's Mono build. See above.
+4. **In-mod player-loop timing and `ProfilerRecorder` counters — BUILT.** Shipped as
+   `FrameBudgetProbe`. The player-loop timing is the part that answers
+   rendering-vs-physics-vs-scripts, and it needed no download at all. The
+   `ProfilerRecorder` counters (draw calls, batches, SetPass, triangles) ride along in the
+   same feature; they are expected to read `na` in a non-development player, and the log
+   records their validity at startup so we find out either way.
 
-Route 1 first: it costs one download and answers the biggest open question without touching
-the game.
+Route 4 is done and costs nothing to run, so it goes first. Route 1 second, once route 4
+has narrowed the question enough that unsymbolized `UnityPlayer.dll+0x...` frames are still
+worth reading.
 
 ## Cleanups owed
 

@@ -24,6 +24,7 @@ namespace Highball
         private static Evaluator _evaluator;
         private static FeatureHost _host;
         private static Telemetry _telemetry;
+        private static FrameBudgetProbe _budget;
         private static Harmony _harmony;
 
         private static float _refreshTimer;
@@ -36,6 +37,7 @@ namespace Highball
 
             _registry = new CarRegistry();
             _evaluator = new Evaluator();
+            _budget = new FrameBudgetProbe();
             _host = new FeatureHost(new IFeature[]
             {
                 // Priority order == claim order: FeatureHost.Apply offers each car to
@@ -46,7 +48,9 @@ namespace Highball
                 // Acts on terrains, not cars, so it never claims and its position here
                 // doesn't affect arbitration. Kept after the car-acting features so
                 // priority order stays readable.
-                new TerrainLodFeature()
+                new TerrainLodFeature(),
+                // Read-only and never claims. Kept last so mutating features stay first.
+                _budget
             });
 
             // A car reaped by discovery may still be claimed by a feature; hand it back
@@ -148,6 +152,11 @@ namespace Highball
                 _telemetry.StatusLabel(),
                 _telemetry.RowsWritten));
 
+            if (Settings.Instance.EnableFrameBudgetProbe)
+            {
+                GUILayout.Label("Frame budget: " + _budget.StatusLine());
+            }
+
             GUILayout.Space(8f);
             UnityModManager.UI.DrawFields(ref Settings.Instance, modEntry,
                 DrawFieldMask.Public, Settings.Instance.OnChange);
@@ -207,6 +216,11 @@ namespace Highball
         internal static int TelemetryRowsWritten()
         {
             return _telemetry != null ? _telemetry.RowsWritten : 0;
+        }
+
+        internal static string FrameBudgetStatus()
+        {
+            return _budget != null ? _budget.StatusLine() : "n/a";
         }
 
         /// <summary>
