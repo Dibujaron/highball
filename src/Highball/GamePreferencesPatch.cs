@@ -209,6 +209,11 @@ namespace Highball
 
                 panel.AddSection("Diagnostics", b =>
                 {
+                    // Unconditional, and first: this is the workload figure every telemetry
+                    // row is read against, so it has to be visible while driving.
+                    b.AddField("Cars", () => Main.CarCountStatus(),
+                        UIPanelBuilder.Frequency.Fast);
+
                     b.AddFieldToggle("Frame budget probe", () => s.EnableFrameBudgetProbe,
                         v => { s.EnableFrameBudgetProbe = v; s.OnChange(); }, true)
                      .Tooltip("Frame budget probe (read-only)",

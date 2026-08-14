@@ -224,6 +224,23 @@ namespace Highball
         }
 
         /// <summary>
+        /// The tracked/moving readout the UMM panel has always shown, exposed so the in-game
+        /// tab can show it too. `moving` is the workload figure telemetry rows are compared
+        /// against, so having it visible only from the main menu made it useless while
+        /// actually driving — which is the only time it means anything.
+        /// </summary>
+        internal static string CarCountStatus()
+        {
+            if (_registry == null || _evaluator == null)
+            {
+                return "n/a";
+            }
+
+            return string.Format("tracked {0}   moving {1}",
+                _registry.TrackedCount, _evaluator.MovingCount);
+        }
+
+        /// <summary>
         /// A feature switched off must hand back everything it was holding. UMM calls
         /// Settings.OnChange whenever a drawn field changes but does not tell us which one,
         /// so ask every feature whether its toggle still agrees with what it is holding.
