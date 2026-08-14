@@ -136,8 +136,14 @@ namespace Highball
                       + "Telemetry is recorded either way; normal use does not need this on.")]
         public bool RunExperiment = false;
 
-        [Draw("Experiment window (s)", Type = DrawType.Slider, Min = 10, Max = 120, Precision = 0,
-              VisibleOn = "RunExperiment|true")]
+        /// <summary>
+        /// How often a telemetry row is written. Governs LIVE row cadence too, not just the
+        /// A/B window length — telemetry is recorded every session, so this stays visible
+        /// and adjustable regardless of RunExperiment.
+        /// </summary>
+        [Draw("Telemetry row interval (s)", Type = DrawType.Slider, Min = 10, Max = 120, Precision = 0,
+              Tooltip = "How often a telemetry row is written. Also the length of each baseline/active "
+                      + "window while the A/B experiment is running.")]
         public float ExperimentWindowSeconds = 30f;
 
         /// <summary>

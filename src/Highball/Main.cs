@@ -151,11 +151,21 @@ namespace Highball
             GUILayout.Label("Highball");
             GUILayout.Label($"Tracked: {_registry.TrackedCount}   Moving: {_evaluator.MovingCount}");
 
+            // Telemetry is recorded every session, so this readout is unconditional —
+            // otherwise the panel would give no evidence telemetry is even running while
+            // RunExperiment (off by default) is false. The target is only meaningful while
+            // an A/B run is alternating it.
             if (Settings.Instance.RunExperiment)
             {
-                GUILayout.Label(string.Format("Experiment window: {0}   target: {1}   rows: {2}",
-                    _telemetry.ActiveWindow ? "ACTIVE" : "BASELINE",
+                GUILayout.Label(string.Format("Telemetry: {0}   target: {1}   rows: {2}",
+                    _telemetry.ModeLabel(),
                     Settings.Instance.ExperimentTarget,
+                    _telemetry.RowsWritten));
+            }
+            else
+            {
+                GUILayout.Label(string.Format("Telemetry: {0}   rows: {1}",
+                    _telemetry.ModeLabel(),
                     _telemetry.RowsWritten));
             }
 

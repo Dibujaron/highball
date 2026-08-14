@@ -43,6 +43,10 @@ namespace Highball
         private float _windowElapsed;
         private float _settleRemaining;
 
+        // Tracks RunExperiment as of the last time we looked, purely to let
+        // SettingsChanged() detect a false-to-true edge (see its comment).
+        private bool _lastRunExperiment;
+
         private int _frames;
         private float _frameSeconds;
 
@@ -81,6 +85,11 @@ namespace Highball
             // silently wipe the first session's file instead of harmlessly appending to it.
             _fileStem = "Highball-" + DateTime.Now.ToString("yyyyMMdd-HHmmssfff", CultureInfo.InvariantCulture);
             OpenNewFile();
+
+            // Seed the edge-detector with whatever RunExperiment loaded as, so the first
+            // settings-panel edit that turns it on from here is correctly seen as a
+            // false-to-true edge rather than a false positive from an unset default.
+            _lastRunExperiment = Settings.Instance.RunExperiment;
 
             // ResolveTarget() is not file I/O, but it is structurally throwable (it walks
             // an arbitrary IFeature's Id/DisplayName/Active accessors), and Main.Load has no
@@ -390,13 +399,15 @@ namespace Highball
         }
 
         /// <summary>
-        /// The `mode` column's value for the row about to be written. LIVE whenever
+        /// The `mode` column's value for the row about to be written: LIVE whenever
         /// RunExperiment is off — normal operation, where every feature simply follows
         /// its own Enabled toggle and there are no arms to distinguish. ACTIVE/BASELINE
         /// only mean something while the A/B harness is alternating the experiment
-        /// target between windows.
+        /// target between windows. Internal rather than private so Main's GUI readout can
+        /// show the same value FlushWindow is about to stamp, without duplicating the
+        /// LIVE-vs-ACTIVE/BASELINE decision anywhere else.
         /// </summary>
-        private string ModeLabel()
+        internal string ModeLabel()
         {
             if (!Settings.Instance.RunExperiment)
             {
@@ -496,14 +507,32 @@ namespace Highball
         /// (including a possible RunExperiment or ExperimentTarget change) take effect
         /// immediately rather than waiting for a natural window boundary that, if
         /// RunExperiment was just turned off, will never come.
+        ///
+        /// With LIVE as the default, turning RunExperiment on mid-session is the normal way
+        /// a player starts an A/B run — the equivalent of Main.OnToggle's ForceActive(false)
+        /// at mod-enable time, which starts every run on baseline so the first recorded arm
+        /// is a control. This detects that same false-to-true edge (via _lastRunExperiment,
+        /// since UMM does not tell us which field changed) and forces _activeWindow to false
+        /// before ApplyMode runs, so a mid-session A/B start gets the same guarantee: its
+        /// first recorded window is always BASELINE, never the treatment arm.
         /// </summary>
         internal void SettingsChanged()
         {
+            bool runExperimentNow = Settings.Instance.RunExperiment;
+            bool justTurnedOn = runExperimentNow && !_lastRunExperiment;
+
             _frames = 0;
             _frameSeconds = 0f;
             _windowElapsed = 0f;
             _settleRemaining = SettleSeconds;
+
+            if (justTurnedOn)
+            {
+                _activeWindow = false;
+            }
+
             ApplyMode();
+            _lastRunExperiment = runExperimentNow;
         }
 
         /// <summary>
