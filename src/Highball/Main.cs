@@ -40,6 +40,7 @@ namespace Highball
             _host = new FeatureHost(new IFeature[]
             {
                 // Priority order. Sleep, once it exists, goes ahead of solver LOD.
+                new CarRendererFeature(),
                 new SolverLodFeature(),
                 // Acts on terrains, not cars, so it never claims and its position here
                 // doesn't affect arbitration. Kept after the car-acting features so

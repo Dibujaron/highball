@@ -56,6 +56,7 @@ $sources = @(
     (Join-Path $here "Evaluator.cs"),
     (Join-Path $here "IFeature.cs"),
     (Join-Path $here "FeatureHost.cs"),
+    (Join-Path $here "CarRendererFeature.cs"),
     (Join-Path $here "SolverLodFeature.cs"),
     (Join-Path $here "TerrainLodFeature.cs"),
     (Join-Path $here "SleepHeadroomProbe.cs"),

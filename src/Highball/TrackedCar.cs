@@ -28,5 +28,11 @@ namespace Highball
         // not these fields. ---
         internal int OriginalSolverIterations;
         internal bool IsDowngraded;
+
+        // --- scratch fields private to CarRendererFeature. A second feature must NOT
+        // reuse these; keep your own state keyed by car. ---
+        internal Renderer[] Renderers;
+        internal UnityEngine.Rendering.ShadowCastingMode[] OriginalShadowModes;
+        internal bool ShadowsSuppressed;
     }
 }

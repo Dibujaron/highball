@@ -63,6 +63,15 @@ namespace Highball
               Tooltip = "Measures how many cars are parked but still awake. Changes nothing.")]
         public bool EnableSleepHeadroomProbe = true;
 
+        [Draw("Car renderer LOD  [experimental]", Type = DrawType.Toggle, Box = true, Collapsible = true,
+              Tooltip = "Stops distant rolling stock from casting shadows. Cars never disappear or change shape.")]
+        public bool EnableCarRendererLod = false;
+
+        [Draw("Car shadow distance (m)", Type = DrawType.Slider, Min = 50, Max = 2000,
+              VisibleOn = "EnableCarRendererLod|true",
+              Tooltip = "Past this distance a car stops casting shadows. Its own shadow is a few pixels there.")]
+        public float CarShadowDistanceMeters = 300f;
+
         [Draw("Tree & ground detail LOD  [experimental]", Type = DrawType.Toggle, Box = true, Collapsible = true,
               Tooltip = "Draws distant trees as flat billboards and shortens ground-detail draw distance. "
                       + "Never changes density — the forest stays as thick as you set it.")]
