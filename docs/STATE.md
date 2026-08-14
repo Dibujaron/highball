@@ -85,26 +85,54 @@ are runtime-only and never persist to the save.
 Ships with an A/B harness that alternates BASELINE/ACTIVE every 30 s, discarding 2 s after
 each switch, logging to `%LOCALLOW%\Giraffe Lab LLC\Railroader\Highball-<timestamp>.csv`.
 
-### Results so far — INCONCLUSIVE, do not treat as a win
+### Results — DEAD, measured 2026-08-13
 
-Session 1 (2026-08-11 21:53) was **invalid**: `tracked=0`, the discovery bug. Six windows
-of nothing. Useful only as a **noise floor** — with the mod provably inert, BASELINE/ACTIVE
-still differed by up to **9 fps** (54.6 vs 45.1) from noise alone.
+Session 3 (2026-08-13 20:44–20:50) is the proper run: 5 windows per arm, 30 s each,
+`Highball-20260813-204232284-2.csv`.
 
-Session 2 (22:02), after the fix — mod genuinely active:
-
-| Mode | fps | tracked | moving | downgraded |
+| Arm | Windows | Mean fps | Range | Mean moving |
 |---|---|---|---|---|
-| BASELINE | 52.06 | 519 | 74 | 0 |
-| ACTIVE | **47.46** | 519 | 86 | **430** |
+| BASELINE | 5 | **40.38** | 36.0–43.5 | 66.0 |
+| ACTIVE | 5 | **40.20** | 33.0–52.8 | 69.4 |
 
-The mechanism works — 430 of 519 cars downgraded. But **ACTIVE was 4.6 fps slower**, and
-there is only **one window per arm**. That difference sits well inside the ±9 fps noise
-floor measured above, and the two windows weren't even comparable workloads (74 vs 86 cars
-moving). This is not evidence of benefit, and not yet evidence of harm.
+**0.18 fps apart, in the wrong direction.** The within-arm spread on ACTIVE alone is about
+20 fps — roughly a hundred times the between-arm difference. Workloads were comparable.
 
-**Next step: a proper run.** ≥4 minutes, giving ~4 windows per arm, then compare
-distributions rather than single samples.
+The mechanism is definitely working: 413–479 cars downgraded in every ACTIVE window and 0
+in every BASELINE window. It simply buys nothing. Solver-iteration LOD on rolling stock is
+dead.
+
+(Earlier sessions, kept for context: session 1 was invalid — `tracked=0`, the discovery
+bug — but established a **±9 fps noise floor** with the mod provably inert. Session 2 had
+one window per arm and was inconclusive.)
+
+### Stationary sleep — DEAD before it was built, measured 2026-08-13
+
+The read-only headroom probe answered the gating question in the same session. Means over
+10 gameplay windows, out of 519 tracked cars:
+
+| | Mean | Share |
+|---|---|---|
+| stationary | 451.3 | 87.0% |
+| already asleep | 449.7 | 86.6% |
+| **stationary and awake** | **1.6** | **0.31%** |
+
+Against the pre-agreed rule (<10% → "PhysX already handles it, do not build"), this is
+**0.31%**. Essentially every parked car is already asleep.
+
+The prior argument for building it was that bodies in constant contact with track colliders
+and bound by bogie/coupler joints often fail to auto-sleep. On this save they sleep fine.
+`StationarySleepFeature` will not be built. `SleepMinDistanceMeters` and
+`RequiredStationarySeconds` are now dead settings and should be removed.
+
+### Discovery — confirmed working
+
+```
+Discovery: 519 culler records -> 519 tracked (rb on root: 0, rb in children: 519, no rigidbody: 0)
+```
+
+0 of 519 cars carry a rigidbody on the root; all 519 carry one in a child, exactly as
+predicted. The child-search fallback is what makes the mod able to act at all.
 
 ## Decisions and constraints
 
@@ -143,14 +171,30 @@ The child search is essential; root-only returns null for every car.
 
 ## Open threads
 
-1. Run the real A/B on `Highball` (≥4 min) and decide whether solver LOD helps.
-2. If it doesn't: **rendering-CPU is the leading remaining suspect.** The community's most
-   effective workaround is zooming the camera fully in (2 fps → 15–20). Camera zoom changes
-   *rendering* work, not physics work. With 519 cars, MSLDecalPack and three livery packs,
-   and Giraffe Lab's own release note about "adaptive decal culling… with many nearby train
-   cars", this fits the evidence well.
-3. Whether forcing distant parked cars to sleep is a real lever, or whether PhysX already
-   auto-sleeps them. Gated behind a read-only headroom probe with a pre-agreed threshold.
-4. "Better AE" as a *correctness* mod: re-plan triggers, and switch contention between
+**Physics is not the problem.** Three physics hypotheses are now dead with evidence: AE
+planning (0.23% of wall time vs a 2% threshold), stationary sleep (0.31% addressable vs a
+10% threshold), and solver LOD (−0.18 fps over 5+5 windows). By elimination, rendering-CPU
+is the leading remaining suspect.
+
+1. **Tree LOD — the current lead.** Spec at
+   `docs/superpowers/specs/2026-08-13-tree-lod-design.md`. Shorten the distance at which a
+   tree becomes a batched billboard, and cap how many render at full 3D LOD, without
+   touching density. Unity draws 3D terrain trees individually but batches billboards, so
+   this is primarily a draw-call reduction — a CPU saving, which is the side the evidence
+   points at.
+2. **Rendering-CPU more broadly.** The community's most effective workaround is zooming the
+   camera fully in (2 fps → 15–20). Camera zoom changes *rendering* work, not physics work.
+   With 519 cars, MSLDecalPack and three livery packs, and Giraffe Lab's own release note
+   about "adaptive decal culling… with many nearby train cars", this fits the evidence well.
+3. "Better AE" as a *correctness* mod: re-plan triggers, and switch contention between
    trains. Known affordable.
-5. Tree optimizer.
+4. `detailObjectDistance` for grass and ground detail, as a sibling of the tree work.
+
+## Cleanups owed
+
+- Remove `SleepMinDistanceMeters` and `RequiredStationarySeconds` — dead, see above.
+- Log lines read `[Highball] [Highball]`; UMM already adds the prefix, so drop ours.
+- `ExperimentTarget` is a free-text field wanting a technical id (`solver_lod`) that the
+  panel gives the player no way to discover. Make it a dropdown.
+- Settings are only reachable from the main menu in this game, so changing features
+  mid-session means a trip out. Worth knowing when planning a measurement run.

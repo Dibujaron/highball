@@ -11,3 +11,6 @@ obj/
 
 # Captured measurement data
 *.csv
+
+# Measurement data is normally scratch, but sessions we cite in docs are the record.
+!docs/data/*.csv
