@@ -239,6 +239,34 @@ the first lever in this project that the measurements *predict* will work rather
 that merely sounded plausible. Predicted, not measured: it needs the same A/B treatment
 everything else got.
 
+### Measured 2026-08-14 — WORKS (+3 fps), and CUT anyway
+
+Built as `FixedTimestepFeature`, A/B'd the same day over 229 windows across three arms.
+Raw arm means were confounded by traffic (twice now on this save, raw comparisons have
+misled — the arms happened to run at different moving-car counts). Two independent
+corrections agree to two decimals: OLS with moving cars as a covariate gives −1.43 ms, and
+a direct comparison restricted to the moving 60–100 band gives −1.83 ms. In the matched
+band:
+
+| Arm | n | Frame | `total_fixed` | GPU wait | vs 50 Hz |
+|---|---|---|---|---|---|
+| 50 Hz | 52 | 24.78 ms | 11.11 | 0.49 | — |
+| 40 Hz | 26 | 23.04 ms | 7.68 | 1.14 | **+3.06 fps** (−2.1σ) |
+| 30 Hz | 17 | 22.64 ms | 6.24 | 1.89 | +3.81 fps (−2.4σ) |
+
+The mechanism did exactly what was designed — FixedUpdate fell by the predicted fraction to
+the decimal — but only ~45–51% of the saving reached the frame, the rest absorbed mostly by
+GPU wait. That transfer rate falls as the rate drops (51% at 40 Hz, 44% at 30), which also
+caps the whole approach: at 45% transfer, deleting physics entirely would buy ~+9 fps, so
+no real setting can reach +10.
+
+**Decision (owner, 2026-08-14): cut it from the next version.** +3.6 fps is not worth
+shipping a knob that coarsens coupler, brake and derailment simulation — the bar for a
+fidelity-trading feature is +10, and this one provably cannot reach it. The prediction
+methodology note stands for future estimates: discount any "ms saved" by ~2× for the
+transfer rate. Caveat on the result itself: arms were sequential blocks, not interleaved,
+so location/time confounds are only controlled via the traffic covariate.
+
 ## The signal that led here: framerate scales with moving cars
 
 Measured 2026-08-14, from 44 telemetry windows across the two runs above. Regressing the
@@ -317,21 +345,23 @@ over 5+5 windows) and tree crossfade (−0.28 fps over 21+23 windows). Three of 
 mechanically sound arguments that simply did not show up in the framerate. **The bottleneck
 is now identified** — see THE ANSWER above — so what follows is work, not guesses.
 
-1. **The physics tick-rate lever.** Predicted +3 fps at 40 Hz, +6 at 33 Hz. Cheapest real
-   win available, and the prediction is falsifiable: build it, A/B it, believe the CSV.
-   Must ship off; it trades simulation fidelity in the loop that handles coupler slack and
-   braking.
-2. **Make `TrainController.FixedUpdate` cheaper.** 12% of the frame in one method, scaling
+1. **Rendering — the current lead.** The other third of the frame (`total_postlate_ms`
+   7.5–8 ms in the busy band), with no fidelity trade attached. The profiler counters show
+   `batches == draw_calls` **exactly** (7056 = 7056) — nothing batches or instances,
+   anywhere — against only ~450 SetPass calls: thousands of objects drawing few distinct
+   materials, which is precisely what GPU instancing exists for. First step is a read-only
+   render inventory probe over the tracked cars (unique materials, unique meshes,
+   `enableInstancing` flags) to distinguish "fixable from a mod" from "not worth pursuing"
+   before building anything. Same discipline that avoided the PassengerHelper fork.
+2. ~~The physics tick-rate lever.~~ **Measured +3, cut** — see the section above.
+3. **Make `TrainController.FixedUpdate` cheaper.** 12% of the frame in one method, scaling
    at 0.55 ms/s per moving car. Requires decompiling `Assembly-CSharp` to see what it does
    per step; a Harmony transpiler or a targeted skip would be far more invasive than
    anything here so far, and could break the train sim outright. High value, high risk —
-   understand it before touching it.
-3. **`EventSystem.Update` at 18.86 ms/s** (0.44 ms/frame) is Unity UI raycasting, which is
-   suspicious for a game not in a menu. Cheap to investigate, plausibly free to fix.
-4. **Rendering-CPU**, the other third of the frame (`total_postlate_ms` 7.18 ms). The
-   profiler counters show `batches == draw_calls` exactly — nothing is batching — with only
-   ~450 SetPass calls, i.e. thousands of separate objects sharing few materials. That is
-   what the existing car/tree LOD features are aimed at, and now has a real success metric.
+   understand it before touching it. Note the transfer-rate cap applies here too: its full
+   2.97 ms/frame at ~45% transfer is ~+2.7 fps.
+4. ~~`EventSystem.Update`~~ — resolved, not a defect: the player keeps several menus open
+   on screen at all times, so continuous UI raycasting is expected behaviour.
 5. "Better AE" as a *correctness* mod: re-plan triggers, and switch contention between
    trains. Known affordable, and independent of all of the above.
 
