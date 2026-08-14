@@ -190,6 +190,43 @@ is the leading remaining suspect.
    trains. Known affordable.
 4. `detailObjectDistance` for grass and ground detail, as a sibling of the tree work.
 
+## Profile the game — probably higher value than more guessing
+
+Three hypotheses have now been killed by building bespoke instrumentation for each one.
+A profiler would have answered all three in an afternoon. This should probably come before
+the next hypothesis rather than after it.
+
+Two facts make it tractable, both verified on the install:
+
+- `MonoBleedingEdge/` exists, so this is a **Mono** build, not IL2CPP. Managed code is
+  profilable.
+- `Railroader_Data\boot.config` currently reads:
+  `build-guid`, `hdr-display-enabled`, `gfx-enable-gfx-jobs`, `gfx-enable-native-gfx-jobs`,
+  `wait-for-native-debugger=0`, `vr-enabled`, `gc-max-time-slice`. There is **no**
+  `player-connection-debug` line, which is why the Unity Profiler cannot attach as shipped.
+
+Four routes, cheapest first:
+
+1. **Native sampling profiler — no game changes at all.** AMD μProf is free and this is a
+   Ryzen 9. Attach to the running process and read the flame graph. Mono JIT frames resolve
+   poorly, but Unity's *native* frames do not — `Camera.Render`, culling, `PhysX::simulate`
+   and the scripting-update boundary all show clearly. That alone settles
+   rendering-vs-physics-vs-scripts, which is the question we keep guessing at.
+2. **Unity Profiler attach.** Add `player-connection-debug=1` to `boot.config` and attach
+   the standalone Unity Profiler over localhost. Gives real Unity markers and a proper
+   timeline. Back up `boot.config` first; unverified whether this build honours it.
+3. **Mono's own log profiler.** Because it is Mono, `MONO_ENV_OPTIONS=--profile=log:...`
+   may produce a managed-side profile readable with `mprof-report`. Most invasive, most
+   detailed on the C# side.
+4. **In-mod counters via `ProfilerRecorder`.** Unity 2022 can read built-in counters —
+   draw calls, batches, SetPass calls, triangles — from a player build at runtime. Feeding
+   those into Highball's existing CSV would measure the *mechanism* the rendering features
+   target rather than fps, which is a noisy proxy. Needs verification that these counters
+   survive in a non-development player.
+
+Route 1 first: it costs one download and answers the biggest open question without touching
+the game.
+
 ## Cleanups owed
 
 - Remove `SleepMinDistanceMeters` and `RequiredStationarySeconds` — dead, see above.
