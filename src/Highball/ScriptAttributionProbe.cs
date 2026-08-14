@@ -342,11 +342,10 @@ namespace Highball
         {
             if (!_installed)
             {
-                return _installFailed ? "install failed — see the log" : "not installed";
+                return _installFailed ? "install failed" : "off";
             }
 
-            return _patched + " methods patched, reporting to the log every "
-                   + Settings.Instance.TelemetryIntervalSeconds.ToString("F0", CultureInfo.InvariantCulture) + "s";
+            return _patched + " patched → log";
         }
     }
 }

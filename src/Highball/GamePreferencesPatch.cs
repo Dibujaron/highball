@@ -207,32 +207,30 @@ namespace Highball
 
                 panel.Spacer(16f);
 
-                panel.AddSection("Diagnostics", b =>
+                panel.AddSection("Physics", b =>
                 {
-                    // Unconditional, and first: this is the workload figure every telemetry
-                    // row is read against, so it has to be visible while driving.
-                    b.AddField("Cars", () => Main.CarCountStatus(),
-                        UIPanelBuilder.Frequency.Fast);
+                    IConfigurableElement tickRate = null;
 
-                    b.AddFieldToggle("Frame budget probe", () => s.EnableFrameBudgetProbe,
-                        v => { s.EnableFrameBudgetProbe = v; s.OnChange(); }, true)
-                     .Tooltip("Frame budget probe (read-only)",
-                        "Measures where the frame goes — physics vs rendering vs scripts — by timing "
-                        + "Unity's player-loop subsystems. Changes no game state, but does insert "
-                        + "markers into the update loop. Feeds extra telemetry columns.");
+                    b.AddFieldToggle("Lower tick rate  [experimental]", () => s.EnableFixedTimestep,
+                        v => { s.EnableFixedTimestep = v; s.OnChange(); Disable(tickRate, !v); }, true)
+                     .Tooltip("Physics tick rate",
+                        "Runs the physics loop less often. The only setting here that trades "
+                        + "simulation fidelity for framerate: coupler slack, braking and train "
+                        + "handling are all simulated in that loop, so expect handling to change.");
 
-                    b.AddField("Per frame", () => Main.FrameBudgetStatus(),
-                        UIPanelBuilder.Frequency.Periodic);
+                    tickRate = b.AddField("Steps per second",
+                        b.AddSlider(() => s.PhysicsTickRateHz,
+                            () => s.PhysicsTickRateHz.ToString("F0") + " Hz",
+                            v => { s.PhysicsTickRateHz = v; s.OnChange(); },
+                            25f, 50f, true, v => { }))
+                     .Tooltip("Steps per second",
+                        "The game's own rate is 50 Hz. Lower means fewer physics steps per second "
+                        + "and more framerate, at the cost of a coarser simulation. At or above 50 "
+                        + "this does nothing.");
 
-                    b.AddFieldToggle("Script attribution", () => s.EnableScriptAttribution,
-                        v => { s.EnableScriptAttribution = v; s.OnChange(); }, true)
-                     .Tooltip("Script attribution probe (read-only)",
-                        "Splits the C# FixedUpdate/Update cost into a ranked list of which class and "
-                        + "which mod is spending it, written to the log every telemetry interval. "
-                        + "Times hundreds of other mods' methods, so it costs a second or two at "
-                        + "startup and a fraction of a millisecond per frame while running.");
+                    Disable(tickRate, !s.EnableFixedTimestep);
 
-                    b.AddField("Attribution", () => Main.ScriptAttributionStatus(),
+                    b.AddField("Running at", () => Main.TimestepStatus(),
                         UIPanelBuilder.Frequency.Periodic);
                 }, 8f);
 
@@ -259,7 +257,45 @@ namespace Highball
                     Disable(interval, !s.EnableTelemetry);
 
                     b.AddField("Status",
-                        () => Main.TelemetryStatus() + "   rows: " + Main.TelemetryRowsWritten(),
+                        () => Main.TelemetryStatus() + " · " + Main.TelemetryRowsWritten() + " rows",
+                        UIPanelBuilder.Frequency.Periodic);
+                }, 8f);
+
+                panel.Spacer(16f);
+
+                // Last on purpose. These are investigation tools rather than settings anyone
+                // tunes while playing, and this section grew enough to push the sections
+                // above it out of the panel's bounds when it sat in the middle.
+                panel.AddSection("Diagnostics", b =>
+                {
+                    // The workload figure every telemetry row is read against, so it has to
+                    // be visible while driving rather than only from the main menu.
+                    b.AddField("Cars", () => Main.CarCountStatus(),
+                        UIPanelBuilder.Frequency.Fast);
+
+                    b.AddFieldToggle("Frame budget", () => s.EnableFrameBudgetProbe,
+                        v => { s.EnableFrameBudgetProbe = v; s.OnChange(); }, true)
+                     .Tooltip("Frame budget probe (read-only)",
+                        "Measures where the frame goes — physics vs rendering vs scripts — by timing "
+                        + "Unity's player-loop subsystems. Changes no game state, but does insert "
+                        + "markers into the update loop. Feeds extra telemetry columns.");
+
+                    // Values here are kept terse (p/r/s/gpu) because they are drawn into the
+                    // same narrow value column as a slider, and a long string overflows the
+                    // panel rather than wrapping.
+                    b.AddField("ms/frame", () => Main.FrameBudgetStatus(),
+                        UIPanelBuilder.Frequency.Periodic)
+                     .Tooltip("Frame budget", "Physics · Rendering · Scripts · GPU wait, in ms per frame.");
+
+                    b.AddFieldToggle("Attribution", () => s.EnableScriptAttribution,
+                        v => { s.EnableScriptAttribution = v; s.OnChange(); }, true)
+                     .Tooltip("Script attribution probe (read-only)",
+                        "Splits the C# FixedUpdate/Update cost into a ranked list of which class and "
+                        + "which mod is spending it, written to the log every telemetry interval. "
+                        + "Times hundreds of other mods' methods, so it costs a second or two at "
+                        + "startup and a fraction of a millisecond per frame while running.");
+
+                    b.AddField("Methods", () => Main.ScriptAttributionStatus(),
                         UIPanelBuilder.Frequency.Periodic);
                 }, 8f);
             }

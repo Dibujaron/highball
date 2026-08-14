@@ -596,12 +596,12 @@ namespace Highball
         {
             if (!_installed)
             {
-                return _installFailed ? "install failed — see the log" : "not installed";
+                return _installFailed ? "install failed" : "off";
             }
 
             if (_frames == 0)
             {
-                return "installed, waiting for the first frame";
+                return "waiting…";
             }
 
             double physics = 0, scripts = 0, render = 0, loop = 0;
@@ -618,11 +618,12 @@ namespace Highball
                 else if (b.Column.StartsWith("rend_") || b.Column.StartsWith("cull_")) render += ms;
             }
 
+            // Kept deliberately short: this is drawn into the in-game tab's narrow value
+            // column, and a long string overflows the panel rather than wrapping.
             return string.Format(CultureInfo.InvariantCulture,
-                "phys {0:F2}  rend {1:F2}  scripts {2:F2}  gpu-wait {3:F2}  whole loop {4:F2}  (ms/frame)",
+                "p {0:F1} · r {1:F1} · s {2:F1} · gpu {3:F1}",
                 physics / _frames, render / _frames, scripts / _frames,
-                (ToMs(BucketTicks("present_ms")) + ToMs(BucketTicks("wait_present_ms"))) / _frames,
-                loop / _frames);
+                (ToMs(BucketTicks("present_ms")) + ToMs(BucketTicks("wait_present_ms"))) / _frames);
         }
 
         private long BucketTicks(string column)

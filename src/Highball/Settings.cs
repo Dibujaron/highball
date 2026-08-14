@@ -41,6 +41,19 @@ namespace Highball
               Tooltip = "Draw distance for grass and ground detail. Density is never changed.")]
         public float DetailObjectDistanceMeters = 80f;
 
+        [Draw("Physics tick rate  [experimental]", Type = DrawType.Toggle, Box = true, Collapsible = true,
+              Tooltip = "Runs the physics loop less often. This is the only setting here that trades "
+                      + "simulation fidelity for framerate — coupler slack, braking and train handling "
+                      + "are all simulated in that loop.")]
+        public bool EnableFixedTimestep = false;
+
+        [Draw("Physics steps per second (Hz)", Type = DrawType.Slider, Min = 25, Max = 50, Precision = 0,
+              VisibleOn = "EnableFixedTimestep|true",
+              Tooltip = "The game's own rate is 50. Lower means fewer physics steps per second and "
+                      + "more framerate, at the cost of a coarser simulation. Setting this at or above "
+                      + "the game's own rate does nothing.")]
+        public float PhysicsTickRateHz = 40f;
+
         // --- cadence ---
 
         [Draw("Refresh interval (s)", Type = DrawType.Slider, Min = 0.5, Max = 10, Precision = 2,

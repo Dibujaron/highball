@@ -24,6 +24,18 @@ namespace Highball
         }
 
         /// <summary>
+        /// The mirror of <see cref="ClampReduction"/>, for settings where a LARGER value
+        /// means less work — the physics timestep being the case in hand, since a longer
+        /// step means fewer steps per second. Same principle, opposite direction: a feature
+        /// may only ever reduce work, so a configured value below the game's own is ignored
+        /// rather than allowed to make the simulation run more often than it already does.
+        /// </summary>
+        internal static float ClampRelaxation(float configured, float original)
+        {
+            return configured > original ? configured : original;
+        }
+
+        /// <summary>
         /// Edge-triggered distance test with a hysteresis band. Suppression begins past
         /// the threshold and does not end until the object is well inside it. Without the
         /// band, an object hovering at the boundary would flip state every pass, and for
