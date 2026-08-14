@@ -121,8 +121,10 @@ mid-session) actually changes, since any of those changes what the columns, the 
 labels, or the numbers themselves mean.
 
 If `ExperimentTarget` names a feature that's missing, disabled, or has an inert `Active`
-setter, Highball logs a loud warning at startup — an A/B whose two arms are actually
-identical would otherwise look, in the CSV, exactly like a genuine null result.
+setter, Highball logs a loud warning — at startup if the A/B experiment is already
+running by then, or the moment "Run A/B experiment" is turned on mid-session otherwise —
+since an A/B whose two arms are actually identical would otherwise look, in the CSV,
+exactly like a genuine null result.
 
 ### Reading the headroom probe's verdict
 

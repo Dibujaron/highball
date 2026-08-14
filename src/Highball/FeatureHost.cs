@@ -12,6 +12,14 @@ namespace Highball
     {
         private readonly IFeature[] _features;
 
+        // Feature ids that have already logged a full exception from Apply()'s per-car,
+        // per-feature try/catch below. On a 519-car save with two ICarFeatures ticking at
+        // the evaluate cadence, an unthrottled per-occurrence log there is up to ~4,000
+        // full stack traces per second for the rest of the session. This bounds it to one
+        // full trace per feature id, ever, while still catching (and isolating) every
+        // single throw.
+        private readonly HashSet<string> _reportedApplyFailures = new HashSet<string>();
+
         internal FeatureHost(IFeature[] featuresInPriorityOrder)
         {
             _features = featuresInPriorityOrder;
@@ -72,7 +80,16 @@ namespace Highball
                     }
                     catch (Exception ex)
                     {
-                        Main.Log("Feature '" + feature.Id + "' threw from Apply(): " + ex);
+                        // Throttled, not silenced: this runs per car per feature, so a
+                        // feature that throws every pass would otherwise flood the log —
+                        // up to ~4,000 lines/sec on a 519-car save. Log the full exception
+                        // once per feature id, then suppress; the isolation above still
+                        // catches and skips every single throw regardless.
+                        if (_reportedApplyFailures.Add(feature.Id))
+                        {
+                            Main.Log("Feature '" + feature.Id + "' threw from Apply(); further Apply() " +
+                                     "failures for this feature will be suppressed this session: " + ex);
+                        }
                     }
                 }
             }

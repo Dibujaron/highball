@@ -114,75 +114,97 @@ namespace Highball
         /// </summary>
         private void ResolveTarget()
         {
+            // The three validity checks (null-match, not-Enabled, inert-setter) only
+            // matter for the A/B harness itself — they exist to catch a target that
+            // cannot possibly produce two distinguishable arms. If RunExperiment is off
+            // there is no A/B in flight for a bad target to invalidate, so skip them at
+            // launch; otherwise the shipped defaults (ExperimentTarget=solver_lod,
+            // EnableSolverLod=false) would log the "is not Enabled" warning on every
+            // single launch, which is noise in the one channel the owner has while away.
+            // They are NOT skipped forever, though — SettingsChanged() re-runs them the
+            // moment RunExperiment flips false->true mid-session, since the in-game tab
+            // makes that the normal, expected way a player starts an A/B, not just
+            // something set once in the settings file before launch.
+            if (Settings.Instance.RunExperiment)
+            {
+                ValidateExperimentTarget();
+            }
+
+            // WarnIfStarvedByPriority is deliberately NOT gated on RunExperiment: it
+            // matters for LIVE telemetry too, since a starved-but-Enabled target reads
+            // (near-)zero in its own TelemetryValues column regardless of whether an A/B
+            // run is in progress. It IS gated on the target itself being Enabled — see
+            // WarnIfStarvedByPriority's own guard.
+            CheckStarvation();
+        }
+
+        /// <summary>
+        /// The three ExperimentTarget validity checks: does the id match a feature at
+        /// all, is that feature Enabled, and does its Active setter actually do anything.
+        /// Extracted so the exact same checks run both at Init (when RunExperiment is
+        /// already true at launch) and from SettingsChanged on a false->true edge (when a
+        /// player starts an A/B mid-session via the in-game tab) — the two are otherwise
+        /// easy to let drift apart, and a bad target reaching neither path would silently
+        /// produce two identical A/B arms with no warning anywhere.
+        /// </summary>
+        private void ValidateExperimentTarget()
+        {
             string target = Settings.Instance.ExperimentTarget;
             IFeature feature = _host.Find(target);
 
-            // The null-match, not-Enabled, and inert-setter checks below only matter for
-            // the A/B harness itself — they exist to catch a target that cannot possibly
-            // produce two distinguishable arms. If RunExperiment is off there is no A/B in
-            // flight for a bad target to invalidate, so skip them entirely; otherwise the
-            // shipped defaults (ExperimentTarget=solver_lod, EnableSolverLod=false) would
-            // log the "is not Enabled" warning on every single launch, which is noise in
-            // the one channel the owner has while away. WarnIfStarvedByPriority below is
-            // deliberately NOT gated the same way: it matters for LIVE telemetry too, since
-            // a starved feature reads zero in its own TelemetryValues column regardless of
-            // whether an A/B run is in progress.
-            if (Settings.Instance.RunExperiment)
+            if (feature == null)
             {
-                if (feature == null)
-                {
-                    Main.Log("Telemetry: ExperimentTarget '" + target + "' matches no feature Id. " +
-                             "The A/B harness will alternate nothing; both arms will be identical.");
-                    return;
-                }
-
-                if (!feature.Enabled)
-                {
-                    Main.Log("Telemetry: ExperimentTarget '" + target + "' (" + feature.DisplayName + ") is not " +
-                             "Enabled. FeatureHost.Apply never claims for a disabled feature, so alternating its " +
-                             "Active flag changes nothing; both arms will be identical.");
-                }
-
-                // Probe for an inert Active setter (e.g. a read-only probe) without
-                // disturbing the feature's actual state. Safe to do here: Init() runs
-                // before any car has been offered to a feature, so this flip has no
-                // observable side effect. The restore runs in finally so a setter that
-                // throws mid-probe cannot leave Active inverted. This probe must never run
-                // from CheckStarvation's runtime re-evaluation path — by then cars may
-                // already be claimed, and flipping Active could transiently un-claim one.
-                bool original = feature.Active;
-                bool inert;
-                try
-                {
-                    feature.Active = !original;
-                    inert = feature.Active == original;
-                }
-                finally
-                {
-                    feature.Active = original;
-                }
-
-                if (inert)
-                {
-                    Main.Log("Telemetry: ExperimentTarget '" + target + "' (" + feature.DisplayName + ") has an " +
-                             "inert Active setter; its value never changes. The A/B harness will alternate " +
-                             "nothing; both arms will be identical.");
-                }
+                Main.Log("Telemetry: ExperimentTarget '" + target + "' matches no feature Id. " +
+                         "The A/B harness will alternate nothing; both arms will be identical.");
+                return;
             }
 
-            CheckStarvation();
+            if (!feature.Enabled)
+            {
+                Main.Log("Telemetry: ExperimentTarget '" + target + "' (" + feature.DisplayName + ") is not " +
+                         "Enabled. FeatureHost.Apply never claims for a disabled feature, so alternating its " +
+                         "Active flag changes nothing; both arms will be identical.");
+            }
+
+            // Probe for an inert Active setter (e.g. a read-only probe) without disturbing
+            // the feature's actual state. Safe to run at any point in the session, not
+            // just Init: the swap and its restore are synchronous with no yield in
+            // between, every IFeature.Active setter here is a plain auto-property with no
+            // side effect of its own, and FeatureHost.Apply/Tick — the only code that ever
+            // reads Active — cannot run between the two assignments on Unity's
+            // single-threaded update loop. The restore runs in finally so a setter that
+            // throws mid-probe cannot leave Active inverted.
+            bool original = feature.Active;
+            bool inert;
+            try
+            {
+                feature.Active = !original;
+                inert = feature.Active == original;
+            }
+            finally
+            {
+                feature.Active = original;
+            }
+
+            if (inert)
+            {
+                Main.Log("Telemetry: ExperimentTarget '" + target + "' (" + feature.DisplayName + ") has an " +
+                         "inert Active setter; its value never changes. The A/B harness will alternate " +
+                         "nothing; both arms will be identical.");
+            }
         }
 
         /// <summary>
         /// Re-evaluates claim-priority starvation (WarnIfStarvedByPriority) against the
         /// current ExperimentTarget and feature set. Called once from ResolveTarget at
-        /// Init, and again from SettingsChanged so a starvation condition created by
-        /// toggling features at runtime — the realistic path now that the in-game tab
-        /// makes mid-session toggling normal — is actually caught, not just the one that
-        /// happened to exist at mod load. Deliberately does not repeat ResolveTarget's
-        /// null-match / Enabled / inert-Active-setter checks or its Active-probe swap:
-        /// those are gated behind RunExperiment and are only safe to probe at Init, before
-        /// any car has been offered to a feature.
+        /// Init (unconditionally — starvation matters in LIVE mode too), and again from
+        /// SettingsChanged so a starvation condition created by toggling features at
+        /// runtime — the realistic path now that the in-game tab makes mid-session
+        /// toggling normal — is actually caught, not just the one that happened to exist
+        /// at mod load. Deliberately does not repeat ValidateExperimentTarget's
+        /// null-match / Enabled / inert-Active-setter checks: those are specific to
+        /// whether the A/B harness can produce two distinguishable arms, which is a
+        /// separate question from whether claim priority is starving the target.
         /// </summary>
         private void CheckStarvation()
         {
@@ -217,11 +239,22 @@ namespace Highball
         /// feature's configured distance. Left as a warning only: this does not reorder or
         /// disable anything, it only makes a target that reads zero (or two identical A/B
         /// arms) traceable to a cause instead of a mystery.
+        ///
+        /// Requires the target itself to be Enabled: a disabled target contributes no
+        /// columns at all (FullHeader/TelemetryValues only walk Enabled features), so
+        /// warning about its telemetry reading zero is not just possible but guaranteed
+        /// and uninteresting — ticking some unrelated feature must not warn about a
+        /// target that was never going to appear in the CSV in the first place. Every
+        /// early return below resets _lastStarvationSignature to null rather than leaving
+        /// it stale, so a condition that stops applying (target disabled, blocker
+        /// disabled, target reordered) and later recurs is not silently swallowed by a
+        /// signature left over from before it stopped applying.
         /// </summary>
         private void WarnIfStarvedByPriority(IFeature feature, string target)
         {
-            if (!(feature is ICarFeature))
+            if (!(feature is ICarFeature) || !feature.Enabled)
             {
+                _lastStarvationSignature = null;
                 return;
             }
 
@@ -238,6 +271,7 @@ namespace Highball
 
             if (targetIndex <= 0)
             {
+                _lastStarvationSignature = null;
                 return;
             }
 
@@ -256,7 +290,17 @@ namespace Highball
                 blockerIds.Add(features[blockerIndexes[i]].Id);
             }
 
-            string signature = string.Join("|", blockerIds.ToArray());
+            if (blockerIds.Count == 0)
+            {
+                _lastStarvationSignature = null;
+                return;
+            }
+
+            // Includes the target id, not just the blocker set: two distinct targets that
+            // happen to share the same blocker set must not swallow each other's warning.
+            // Unreachable today — solver_lod is the only feature that can sit behind
+            // another enabled ICarFeature — but cheap to get right now rather than later.
+            string signature = target + "|" + string.Join("|", blockerIds.ToArray());
             if (signature == _lastStarvationSignature)
             {
                 return;
@@ -607,22 +651,37 @@ namespace Highball
             ApplyMode();
             _lastRunExperiment = runExperimentNow;
 
-            // Re-evaluate claim-priority starvation on every settings edit, not just once
-            // at mod load: both CarRendererFeature and SolverLodFeature ship off, and the
-            // in-game tab makes ticking either box mid-session the normal path, so a
-            // launch-time-only check would never see a starvation condition created this
-            // way. Guarded on its own, matching ResolveTarget's guard at Init: this walks
-            // IFeature.Id/DisplayName/Enabled, which is structurally throwable, and
-            // Settings.OnChange has no try/catch of its own around Main.TelemetrySettingsChanged
-            // — an uncaught throw here would propagate into UMM's settings UI instead of
-            // merely degrading telemetry.
+            // Guarded on its own, matching ResolveTarget's guard at Init: both
+            // ValidateExperimentTarget and CheckStarvation walk an arbitrary IFeature's
+            // Id/DisplayName/Enabled/Active, which is structurally throwable, and
+            // Settings.OnChange has no try/catch of its own around
+            // Main.TelemetrySettingsChanged — an uncaught throw here would propagate into
+            // UMM's settings UI instead of merely degrading telemetry.
             try
             {
+                if (justTurnedOn)
+                {
+                    // Re-run the exact validity checks ResolveTarget performs at Init: a
+                    // mid-session RunExperiment false->true edge is now the documented,
+                    // expected way a player starts an A/B (via the in-game tab's toggle),
+                    // not just a settings file that already had it on at launch. Without
+                    // this, turning the A/B on mid-session for a missing/disabled/inert
+                    // target produced no warning anywhere — the exact defect the
+                    // starvation re-check below was added for, reintroduced one guard
+                    // away by gating ResolveTarget itself on RunExperiment.
+                    ValidateExperimentTarget();
+                }
+
+                // Re-evaluate claim-priority starvation on every settings edit, not just
+                // once at mod load: both CarRendererFeature and SolverLodFeature ship
+                // off, and the in-game tab makes ticking either box mid-session the
+                // normal path, so a launch-time-only check would never see a starvation
+                // condition created this way.
                 CheckStarvation();
             }
             catch (Exception ex)
             {
-                Main.Log("Telemetry: CheckStarvation failed: " + ex.Message);
+                Main.Log("Telemetry: target validation failed: " + ex.Message);
             }
         }
 
