@@ -17,6 +17,12 @@ namespace Highball
               Tooltip = "Past this distance a car stops casting shadows. Its own shadow is a few pixels there.")]
         public float CarShadowDistanceMeters = 300f;
 
+        [Draw("GPU instancing  [experimental]", Type = DrawType.Toggle, Box = true, Collapsible = true,
+              Tooltip = "Flips enableInstancing on the game's materials so identical meshes can draw "
+                      + "in batches. Measured by the draw_calls/batches telemetry columns; restored "
+                      + "on toggle-off.")]
+        public bool EnableGpuInstancing = false;
+
         [Draw("Tree & ground detail LOD  [experimental]", Type = DrawType.Toggle, Box = true, Collapsible = true,
               Tooltip = "Draws distant trees as flat billboards and shortens ground-detail draw distance. "
                       + "Never changes density — the forest stays as thick as you set it.")]

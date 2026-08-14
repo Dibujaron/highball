@@ -203,6 +203,20 @@ namespace Highball
 
                     // Match Settings.cs's VisibleOn = "EnableCarRendererLod|true".
                     Disable(shadowDistance, !s.EnableCarRendererLod);
+
+                    // Lives with the rolling stock even though it sweeps the whole scene,
+                    // because cars are the dominant material population (2,708 of ~2,195
+                    // scene-wide uniques trace to them) and this is where a player looking
+                    // to speed up cars will look.
+                    b.AddFieldToggle("GPU instancing  [experimental]", () => s.EnableGpuInstancing,
+                        v => { s.EnableGpuInstancing = v; s.OnChange(); }, true)
+                     .Tooltip("GPU instancing",
+                        "Flips enableInstancing on the game's materials so identical meshes can "
+                        + "draw in batches. Measured by the draw_calls/batches telemetry columns; "
+                        + "restored on toggle-off.");
+
+                    b.AddField("Instancing", () => Main.GpuInstancingStatus(),
+                        UIPanelBuilder.Frequency.Periodic);
                 }, 8f);
 
                 panel.Spacer(16f);
