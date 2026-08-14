@@ -163,7 +163,83 @@ Discovery: 519 culler records -> 519 tracked (rb on root: 0, rb in children: 519
 0 of 519 cars carry a rigidbody on the root; all 519 carry one in a child, exactly as
 predicted. The child-search fallback is what makes the mod able to act at all.
 
-## The strongest signal so far: framerate scales with moving cars
+## THE ANSWER — `TrainController.FixedUpdate`, measured 2026-08-14
+
+Four hypotheses were killed by guesswork. Two probes answered it in an afternoon.
+
+86 telemetry windows, mean 41.3 fps / 24.81 ms frame, mean 84 moving cars.
+
+### Where the frame goes
+
+| | ms/frame | Share |
+|---|---|---|
+| `total_fixed_ms` (the whole FixedUpdate phase) | **11.37** | **46%** |
+| ↳ `script_fixed_ms` (C# in FixedUpdate) | 8.65 | 35% |
+| ↳ `phys_fixed_ms` (PhysX itself) | 2.44 | 9.8% |
+| `script_update_ms` | 2.41 | 10% |
+
+`script_fixed_ms` explains 84% of frame-time variance (r = 0.918). PhysX is a tenth of
+the frame — the fifth and final confirmation that the physics branch was never the problem.
+
+### Who is spending it
+
+`ScriptAttributionProbe` Harmony-patched 170 MonoBehaviour `FixedUpdate`/`Update` methods
+(0 failures) and ranked them over 87 windows:
+
+| ms/s | calls/s | Owner |
+|---|---|---|
+| **122.76** | **50** | **`Assembly-CSharp:TrainController.FixedUpdate`** |
+| 19.42 | 23107 | `Assembly-CSharp:Car.FixedUpdate` |
+| 19.12 | 300 | `Assembly-CSharp:CullingManager.FixedUpdate` |
+| 18.86 | 43 | `UnityEngine.UI:EventSystem.Update` |
+| 9.38 | 50 | `KinematicCharacterController:KinematicCharacterSystem.FixedUpdate` |
+
+**One `TrainController`, once per fixed step, 2.46 ms per call.** That is 2.97 ms/frame —
+**12% of the entire frame** — and six times the next item. Its call count is 50/s, so the
+probe's own ~75 ns/call overhead is 0.004 ms/s against it: this number is essentially
+unperturbed, unlike the high-call-count rows (`Car`, `Hose`) which are inflated ~9%.
+
+**It scales linearly with traffic**: against moving cars, **r = +0.894, slope 0.55 ms/s per
+moving car**, ranging 74 ms/s at 20 moving to 149 ms/s at 126 moving. That closes the chain
+the whole project has been chasing:
+
+> more moving cars → `TrainController.FixedUpdate` does more work → frame time rises → fps falls
+
+The moving-car correlation found earlier (r = −0.57) was real but was a *proxy*. This is
+the mechanism, and it is exactly the complaint the project opened with: 12+ concurrent AI
+consists degrading framerate.
+
+### Mods are not the problem
+
+By declaring assembly, the base game (`Assembly-CSharp`) accounts for roughly four-fifths
+of attributed script time; every mod combined is the remaining fifth, and the largest single
+mod entry is under 6 ms/s. **`PassengerHelper` does not appear anywhere in the ranking** —
+forking it, which was on the table purely because it is noisy in the log, would have been
+wasted effort. This is why attribution came before modification.
+
+Caveats worth carrying: roughly half of `script_fixed_ms + script_update_ms` (~456 ms/s) is
+attributed (~220 ms/s), the rest being coroutines, `Invoke`, `LateUpdate` (unpatched) and
+Unity's own iteration overhead; and the traffic correlation aligns log windows to CSV
+windows by sequence rather than timestamp, since the log lines carry no timestamp.
+
+### The lever this hands us
+
+`fixedDeltaTime` measures **exactly 20.0 ms (50 Hz)**, at 1.21 steps per frame. Everything
+in that 11.37 ms bucket runs per *step*, so the tick rate scales it directly:
+
+| Tick rate | Predicted frame | Predicted fps |
+|---|---|---|
+| 50 Hz (current) | 24.81 ms | 41.3 |
+| 40 Hz | 22.54 ms | **44.4** |
+| 33 Hz | 21.01 ms | **47.6** |
+
++3 to +6 fps, from a one-line setting. It is a genuine fidelity trade — coupler slack and
+braking are simulated in that loop, so handling may change and it must ship off — but it is
+the first lever in this project that the measurements *predict* will work rather than one
+that merely sounded plausible. Predicted, not measured: it needs the same A/B treatment
+everything else got.
+
+## The signal that led here: framerate scales with moving cars
 
 Measured 2026-08-14, from 44 telemetry windows across the two runs above. Regressing the
 `fps` column on the `moving` column:
@@ -235,24 +311,28 @@ The child search is essential; root-only returns null for every car.
 
 ## Open threads
 
-**Four hypotheses are now dead with evidence**: AE planning (0.23% of wall time vs a 2%
+**Four hypotheses are dead with evidence**: AE planning (0.23% of wall time vs a 2%
 threshold), stationary sleep (0.31% addressable vs a 10% threshold), solver LOD (−0.18 fps
 over 5+5 windows) and tree crossfade (−0.28 fps over 21+23 windows). Three of the four were
-mechanically sound arguments that simply did not show up in the framerate.
+mechanically sound arguments that simply did not show up in the framerate. **The bottleneck
+is now identified** — see THE ANSWER above — so what follows is work, not guesses.
 
-1. **Profile the game — now the lead, ahead of any new hypothesis.** See the section
-   below. Four hypotheses have each cost a bespoke instrument to kill, and the one real
-   signal in the data (moving cars, above) names a symptom rather than a subsystem. Guessing
-   has a 0-for-4 record here; stop.
-2. **The per-moving-car cost**, once the profiler says which subsystem carries it. If it is
-   PhysX per-body rather than per-iteration, solver LOD failing makes sense and the knob to
-   look for is a different one. If it is rendering that merely correlates with moving cars,
-   that redirects to the decal/livery suspicion below.
-3. **Rendering-CPU more broadly.** The community's most effective workaround is zooming the
-   camera fully in (2 fps → 15–20). Camera zoom changes *rendering* work, not physics work.
-   With 519 cars, MSLDecalPack and three livery packs, and Giraffe Lab's own release note
-   about "adaptive decal culling… with many nearby train cars", this fits the evidence well.
-4. "Better AE" as a *correctness* mod: re-plan triggers, and switch contention between
+1. **The physics tick-rate lever.** Predicted +3 fps at 40 Hz, +6 at 33 Hz. Cheapest real
+   win available, and the prediction is falsifiable: build it, A/B it, believe the CSV.
+   Must ship off; it trades simulation fidelity in the loop that handles coupler slack and
+   braking.
+2. **Make `TrainController.FixedUpdate` cheaper.** 12% of the frame in one method, scaling
+   at 0.55 ms/s per moving car. Requires decompiling `Assembly-CSharp` to see what it does
+   per step; a Harmony transpiler or a targeted skip would be far more invasive than
+   anything here so far, and could break the train sim outright. High value, high risk —
+   understand it before touching it.
+3. **`EventSystem.Update` at 18.86 ms/s** (0.44 ms/frame) is Unity UI raycasting, which is
+   suspicious for a game not in a menu. Cheap to investigate, plausibly free to fix.
+4. **Rendering-CPU**, the other third of the frame (`total_postlate_ms` 7.18 ms). The
+   profiler counters show `batches == draw_calls` exactly — nothing is batching — with only
+   ~450 SetPass calls, i.e. thousands of separate objects sharing few materials. That is
+   what the existing car/tree LOD features are aimed at, and now has a real success metric.
+5. "Better AE" as a *correctness* mod: re-plan triggers, and switch contention between
    trains. Known affordable, and independent of all of the above.
 
 Tree LOD and `detailObjectDistance` were the previous lead; both are built, both ship off,

@@ -21,12 +21,18 @@ Four hypotheses have now been measured and killed:
 | Tree crossfade length (mod was writing 4× the game's own value, so near every visible tree drew twice) | −0.28 fps over 21 vs. 23 windows | — | Null — mechanically sound, invisible in the framerate. |
 
 Three of those four were sound mechanical arguments that simply never showed up in the
-framerate. The one clear signal in the data so far is not a feature at all: across 44
-telemetry windows, framerate tracks the number of *moving* cars at **r = −0.57, about
-−0.21 fps per moving car** — a ~14 fps swing over the observed range, and an order of
-magnitude larger than anything any feature here has moved. That names a symptom, not a
-subsystem, so the next step is a profiler rather than a fifth hypothesis. Full detail lives
-in `docs/STATE.md`.
+framerate. Rather than try a fifth, the project built general instrumentation instead — and
+it answered the question in an afternoon:
+
+> **`TrainController.FixedUpdate` is the bottleneck.** One method, once per physics step,
+> **2.46 ms per call — 12% of the entire frame**, six times the next largest cost. It scales
+> linearly with traffic (r = +0.894, 0.55 ms/s per moving car), which is exactly the
+> complaint this project opened with: 12+ concurrent AI consists degrading framerate.
+
+For context, PhysX itself is 9.8% of the frame and the whole `FixedUpdate` phase is 46%.
+The base game accounts for roughly four-fifths of C# frame cost; **all mods combined are the
+other fifth**. Full detail, including the measured `fixedDeltaTime` of exactly 50 Hz and
+what lowering it is predicted to buy, lives in `docs/STATE.md`.
 
 Nothing here ships on "seems like it should help." A feature either carries its own
 evidence, or it stays behind an explicit `[experimental]` label until it does. A feature
@@ -40,7 +46,8 @@ they had. Their code is in the git history if the question ever reopens.
 | --- | --- | --- | --- |
 | Tree & ground detail LOD | `terrain_lod` | Experimental, **off** by default | Draws distant trees as batched billboards and shortens ground-detail draw distance. Never changes density — the forest stays as thick as you set it. Unmeasured in-game; the rendering-CPU hypothesis it targets is the current lead but is not yet confirmed. |
 | Car renderer LOD | `car_renderer_lod` | Experimental, **off** by default | Stops distant rolling stock from casting shadows. Cars never disappear or change shape. Unmeasured in-game, for the same reason as above. |
-| Frame budget probe | `frame_budget` | Read-only diagnostic, **off** by default | Times Unity's player-loop subsystems to say where the frame actually goes — physics, rendering, scripts, or waiting on the GPU. Changes no game state, but it is the most invasive code here: it inserts timing markers into the update loop. See below. |
+| Frame budget probe | `frame_budget` | Read-only diagnostic, **off** by default | Times Unity's player-loop subsystems to say where the frame actually goes — physics, rendering, scripts, or waiting on the GPU. Changes no game state, but it inserts timing markers into the update loop. See below. |
+| Script attribution probe | `script_attrib` | Read-only diagnostic, **off** by default | Splits the C# `FixedUpdate`/`Update` cost into a ranked list of which class, in which assembly, is spending it — so a mod's cost is distinguishable from the base game's without disabling anything. Harmony-patches every `MonoBehaviour` in every loaded assembly, which makes it the broadest code here. Reports to the log. |
 
 **The mod modifies PhysX and renderer state only at runtime and never persists any change
 to the save file.** Everything a feature claims is handed back on toggle-off and on mod
@@ -170,7 +177,43 @@ work is *not* captured here.
 
 The `draw_calls`, `setpass_calls`, `batches` and `triangles` columns come from
 `ProfilerRecorder`. Those counters are usually stripped from non-development players, so
-they may read `na` — the log records whether they came back valid at startup.
+they may read `na` — the log records whether they came back valid at startup. On this
+install they came back **valid**, and immediately showed `batches == draw_calls` exactly,
+which is what zero batching looks like.
+
+`fixed_steps` is cumulative like the rest. Everything in the dominant `total_fixed_ms`
+bucket runs once per fixed *step*, not once per frame, so steps-per-frame is what says
+whether changing the physics tick rate would buy anything.
+
+## The script attribution probe
+
+The frame budget probe can say *that* C# in `FixedUpdate` is a third of the frame, but not
+*whose*: Unity invokes every `MonoBehaviour.FixedUpdate` from native code, so the base game
+and every mod collapse into one number. They're ordinary managed methods though, so this
+probe Harmony-patches each one and times it individually, reporting a ranked list by
+declaring assembly and type to the log every telemetry interval:
+
+```
+ScriptAttrib: 30.1s window, 213.8 ms/s across 170 patched methods. Top 20:
+    70.30 ms/s         50 calls/s  Assembly-CSharp:TrainController.FixedUpdate
+    14.81 ms/s      23358 calls/s  Assembly-CSharp:Car.FixedUpdate
+```
+
+The assembly name is the point: it tells you whether a cost belongs to the game or to a
+specific mod, without disabling anything — which matters when the mods in question are
+load-bearing. It's what turned "PassengerHelper is noisy, maybe fork it" into "PassengerHelper
+does not appear in the ranking at all".
+
+Two things to keep in mind reading it. The timing adds roughly 75 ns per call, so rows with
+huge call counts are inflated by a few percent while rows called 50 times a second are
+essentially exact — compare rankings, not absolute totals. And rows are per-class, so a mod
+spread across ten components shows as ten rows; aggregate by assembly to judge a mod.
+
+It patches hundreds of methods belonging to other people's code, which makes it the
+broadest thing in this repository. It ships off, patches under its own Harmony id so
+removing it can't disturb the preferences-window patch, isolates every individual patch so
+one unpatchable method can't abort the sweep, and counts calls whose method fails to resolve
+rather than silently understating the ranking.
 
 ## Prior art
 
