@@ -95,6 +95,7 @@ namespace Highball
                     // when graphics settings change. Yield to it rather than fight.
                     if (t.treeBillboardDistance != s.WroteBillboardDistance
                         || t.treeMaximumFullLODCount != s.WroteMaxFullLod
+                        || t.treeCrossFadeLength != s.WroteCrossFade
                         || t.detailObjectDistance != s.WroteDetailDistance)
                     {
                         Recapture(s, t);
@@ -113,11 +114,16 @@ namespace Highball
 
                 try
                 {
+                    // Set before the writes, not after: if this throws partway through, the
+                    // terrain is already partially mutated, and ReleaseAll must still restore
+                    // it. Restoring a terrain we never actually changed is harmless — it just
+                    // writes back the values we captured from it — but failing to restore one
+                    // we did change is not.
+                    s.Applied = true;
                     t.treeBillboardDistance = s.WroteBillboardDistance;
                     t.treeMaximumFullLODCount = s.WroteMaxFullLod;
                     t.treeCrossFadeLength = s.WroteCrossFade;
                     t.detailObjectDistance = s.WroteDetailDistance;
-                    s.Applied = true;
                 }
                 catch (Exception ex)
                 {
