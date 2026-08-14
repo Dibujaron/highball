@@ -11,7 +11,7 @@ consists degrades framerate badly, on hardware that should be nowhere near its l
 
 Every feature in this mod exists because a measurement justified it, and every feature
 ships with its own off switch. That discipline exists because it was learned the hard way.
-Four hypotheses have now been measured and killed:
+Six hypotheses have now been measured and killed:
 
 | Hypothesis | Measured | Threshold | Verdict |
 | --- | --- | --- | --- |
@@ -19,10 +19,18 @@ Four hypotheses have now been measured and killed:
 | Stationary sleep (forcing parked cars to sleep) | 0.31% of tracked cars addressable | 10% | Dead before it was built — PhysX already sleeps nearly every parked car on its own. |
 | Solver iteration LOD on distant, steady rolling stock | −0.18 fps over five 30 s windows per arm (BASELINE vs. ACTIVE) | — | Dead — measurably no benefit, in the wrong direction, against a ±9 fps noise floor. |
 | Tree crossfade length (mod was writing 4× the game's own value, so near every visible tree drew twice) | −0.28 fps over 21 vs. 23 windows | — | Null — mechanically sound, invisible in the framerate. |
+| Physics tick rate (50 → 40/30 Hz) | +3.06 / +3.81 fps, traffic-controlled, past 2σ | +10 for a fidelity trade | **Worked, and cut anyway** — a knob that coarsens coupler/brake simulation cannot justify +3.6, and the ~45% CPU→frame transfer rate caps the whole approach below +10. |
+| GPU instancing flip (`enableInstancing` on 5,268 materials) | `batches == draw_calls`, never diverged | divergence | Null — the shaders lack instancing variants, so the flag is inert. Removed same day; also circumstantially implicated in an app hang. |
 
-Three of those four were sound mechanical arguments that simply never showed up in the
-framerate. Rather than try a fifth, the project built general instrumentation instead — and
-it answered the question in an afternoon:
+The render census that accompanied the last one also closed the passive doors: the SRP
+Batcher is already enabled, and the car shader is a lean 14-property URP shader, so
+neither "turn the batcher on" nor "swap the shader" has any benefit available. Rendering
+gains, if any, must come from drawing *fewer things* — which is what the two LOD features
+already target.
+
+Most of those were sound mechanical arguments that simply never showed up in the
+framerate. After the fourth, the project built general instrumentation instead of a fifth
+guess — and it answered the question in an afternoon:
 
 > **`TrainController.FixedUpdate` is the bottleneck.** One method, once per physics step,
 > **2.46 ms per call — 12% of the entire frame**, six times the next largest cost. It scales
@@ -31,8 +39,8 @@ it answered the question in an afternoon:
 
 For context, PhysX itself is 9.8% of the frame and the whole `FixedUpdate` phase is 46%.
 The base game accounts for roughly four-fifths of C# frame cost; **all mods combined are the
-other fifth**. Full detail, including the measured `fixedDeltaTime` of exactly 50 Hz and
-what lowering it is predicted to buy, lives in `docs/STATE.md`.
+other fifth**. Making that one method cheaper is the active line of work. Full detail lives
+in `docs/STATE.md`.
 
 Nothing here ships on "seems like it should help." A feature either carries its own
 evidence, or it stays behind an explicit `[experimental]` label until it does. A feature
@@ -44,8 +52,8 @@ they had. Their code is in the git history if the question ever reopens.
 
 | Feature | Id | Status | What it does |
 | --- | --- | --- | --- |
-| Tree & ground detail LOD | `terrain_lod` | Experimental, **off** by default | Draws distant trees as batched billboards and shortens ground-detail draw distance. Never changes density — the forest stays as thick as you set it. Unmeasured in-game; the rendering-CPU hypothesis it targets is the current lead but is not yet confirmed. |
-| Car renderer LOD | `car_renderer_lod` | Experimental, **off** by default | Stops distant rolling stock from casting shadows. Cars never disappear or change shape. Unmeasured in-game, for the same reason as above. |
+| Tree & ground detail LOD | `terrain_lod` | Experimental, **off** by default | Draws distant trees as batched billboards and shortens ground-detail draw distance. Never changes density — the forest stays as thick as you set it. No measured gain yet, but draw-count reduction is the one rendering lever still open. |
+| Car renderer LOD | `car_renderer_lod` | Experimental, **off** by default | Stops distant rolling stock from casting shadows. Cars never disappear or change shape. Same rationale, and same unproven status, as the tree LOD. |
 | Frame budget probe | `frame_budget` | Read-only diagnostic, **off** by default | Times Unity's player-loop subsystems to say where the frame actually goes — physics, rendering, scripts, or waiting on the GPU. Changes no game state, but it inserts timing markers into the update loop. See below. |
 | Script attribution probe | `script_attrib` | Read-only diagnostic, **off** by default | Splits the C# `FixedUpdate`/`Update` cost into a ranked list of which class, in which assembly, is spending it — so a mod's cost is distinguishable from the base game's without disabling anything. Harmony-patches every `MonoBehaviour` in every loaded assembly, which makes it the broadest code here. Reports to the log. |
 
@@ -178,8 +186,10 @@ work is *not* captured here.
 The `draw_calls`, `setpass_calls`, `batches` and `triangles` columns come from
 `ProfilerRecorder`. Those counters are usually stripped from non-development players, so
 they may read `na` — the log records whether they came back valid at startup. On this
-install they came back **valid**, and immediately showed `batches == draw_calls` exactly,
-which is what zero batching looks like.
+install they came back **valid**. One reading note learned the hard way: `batches ==
+draw_calls` does *not* mean the SRP Batcher is off — that batcher reduces per-draw cost,
+not draw count, so the two columns match either way. The pair only diverges when GPU
+instancing or static/dynamic batching actually merges draws.
 
 `fixed_steps` is cumulative like the rest. Everything in the dominant `total_fixed_ms`
 bucket runs once per fixed *step*, not once per frame, so steps-per-frame is what says

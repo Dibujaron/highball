@@ -345,25 +345,48 @@ over 5+5 windows) and tree crossfade (−0.28 fps over 21+23 windows). Three of 
 mechanically sound arguments that simply did not show up in the framerate. **The bottleneck
 is now identified** — see THE ANSWER above — so what follows is work, not guesses.
 
-1. **Rendering — the current lead.** The other third of the frame (`total_postlate_ms`
-   7.5–8 ms in the busy band), with no fidelity trade attached. The profiler counters show
-   `batches == draw_calls` **exactly** (7056 = 7056) — nothing batches or instances,
-   anywhere — against only ~450 SetPass calls: thousands of objects drawing few distinct
-   materials, which is precisely what GPU instancing exists for. First step is a read-only
-   render inventory probe over the tracked cars (unique materials, unique meshes,
-   `enableInstancing` flags) to distinguish "fixable from a mod" from "not worth pursuing"
-   before building anything. Same discipline that avoided the PassengerHelper fork.
-2. ~~The physics tick-rate lever.~~ **Measured +3, cut** — see the section above.
-3. **Make `TrainController.FixedUpdate` cheaper.** 12% of the frame in one method, scaling
-   at 0.55 ms/s per moving car. Requires decompiling `Assembly-CSharp` to see what it does
+1. **Make `TrainController.FixedUpdate` cheaper — the active thread.** 12% of the frame
+   (2.97 ms) in one method, scaling at 0.55 ms/s per moving car. Being decompiled (to
+   scratch space only — decompiled game code never enters this repo) to see what it does
    per step; a Harmony transpiler or a targeted skip would be far more invasive than
    anything here so far, and could break the train sim outright. High value, high risk —
    understand it before touching it. Note the transfer-rate cap applies here too: its full
    2.97 ms/frame at ~45% transfer is ~+2.7 fps.
+2. ~~Rendering via flags.~~ **CLOSED, measured 2026-08-14** — see "Rendering-via-flags"
+   below. Instancing flip null, SRP Batcher already on, shader swap has no benefit
+   available. Remaining rendering levers are draw-COUNT reduction only, i.e. the existing
+   car/tree LOD features.
+3. ~~The physics tick-rate lever.~~ **Measured +3, cut** — see the section above.
 4. ~~`EventSystem.Update`~~ — resolved, not a defect: the player keeps several menus open
    on screen at all times, so continuous UI raycasting is expected behaviour.
 5. "Better AE" as a *correctness* mod: re-plan triggers, and switch contention between
    trains. Known affordable, and independent of all of the above.
+
+### Rendering-via-flags — CLOSED, measured 2026-08-14
+
+The rendering lead ended in one afternoon, three answers deep:
+
+- **Instancing flip: NULL.** `InstancingFeature` set `enableInstancing` on 5,268 materials
+  (0 failures) and the pre-agreed counter rule judged it: `batches` stayed exactly equal to
+  `draw_calls` in every window. The shaders lack instancing variants; the flag is inert.
+  The cleanest null yet — judged by a near-deterministic counter, not the fps noise floor.
+- **The census closed the other two doors.** The pipeline asset reports
+  `useSRPBatcher=True` — already on. That also corrects an earlier misreading:
+  `batches == draw_calls` is what the legacy counters show even when the SRP Batcher is
+  working, since it reduces per-draw cost, not draw count. And the car shader
+  (`Railroader/Standard Car Shader`, 1,026 materials) is a lean 14-property URP shader —
+  already batcher-compatible, so a shader swap has no benefit available. (The earlier
+  "(Builtin) suffix means builtin-pipeline" theory was retracted: a truly builtin shader
+  would render magenta under URP.)
+- **The hang.** The one session with the flag flipped ended in a Windows AppHangB1 hang
+  (14:22:50) during aggressive camera movement. n=1 and circumstantial — but the flip
+  touched VFX Graph particle output materials, which do their own indirect instanced
+  rendering and were never meant to carry the flag. Measured-useless plus hang-suspect:
+  `InstancingFeature` was removed the same day.
+
+Rendering work that reduces draw *count* (shadow suppression, tree billboarding — the
+existing LOD features) remains legitimate; rendering work via renderer/material flags is
+exhausted.
 
 Tree LOD and `detailObjectDistance` were the previous lead; both are built, both ship off,
 and neither has shown a measurable gain. They stay available but are no longer the thread
