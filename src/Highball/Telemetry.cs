@@ -241,7 +241,17 @@ namespace Highball
 
         private string[] BaseHeaders()
         {
-            return new[] { "wall_clock", "window_s", "frames", "avg_frame_ms", "fps", "tracked", "moving" };
+            // The gc_gen* trio is cumulative since process start (GC.CollectionCount), so
+            // difference two rows for the collections inside that window — same convention
+            // as the cumulative feature columns. Recorded because the player reports
+            // stutter and frame spikes: gen0 churn every window is normal, but gen2
+            // collections lining up with the slow windows would name garbage pressure as
+            // the spike mechanism, which no other column can see.
+            return new[]
+            {
+                "wall_clock", "window_s", "frames", "avg_frame_ms", "fps", "tracked", "moving",
+                "gc_gen0", "gc_gen1", "gc_gen2"
+            };
         }
 
         private string[] EnabledFeatures()
@@ -348,7 +358,10 @@ namespace Highball
                     avgFrameMs.ToString("F3", CultureInfo.InvariantCulture),
                     fps.ToString("F3", CultureInfo.InvariantCulture),
                     _registry.TrackedCount.ToString(CultureInfo.InvariantCulture),
-                    _evaluator.MovingCount.ToString(CultureInfo.InvariantCulture)
+                    _evaluator.MovingCount.ToString(CultureInfo.InvariantCulture),
+                    GC.CollectionCount(0).ToString(CultureInfo.InvariantCulture),
+                    GC.CollectionCount(1).ToString(CultureInfo.InvariantCulture),
+                    GC.CollectionCount(2).ToString(CultureInfo.InvariantCulture)
                 };
 
                 // Same array, same order, same filter as FullHeader() above.
