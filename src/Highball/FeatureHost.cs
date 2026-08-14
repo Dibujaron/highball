@@ -49,19 +49,30 @@ namespace Highball
                         continue;
                     }
 
-                    if (claimed || !feature.Enabled || !feature.Active)
+                    // Isolated per feature, matching Tick/ReleaseAll below: a throwing
+                    // TryClaim or Release must not abort the pass for the remaining cars or
+                    // features. Without this, one bad feature mid-array could leave every
+                    // later car unprocessed for the rest of that Apply() call.
+                    try
                     {
-                        feature.Release(car);
-                        continue;
-                    }
+                        if (claimed || !feature.Enabled || !feature.Active)
+                        {
+                            feature.Release(car);
+                            continue;
+                        }
 
-                    if (feature.TryClaim(car))
-                    {
-                        claimed = true;
+                        if (feature.TryClaim(car))
+                        {
+                            claimed = true;
+                        }
+                        else
+                        {
+                            feature.Release(car);
+                        }
                     }
-                    else
+                    catch (Exception ex)
                     {
-                        feature.Release(car);
+                        Main.Log("Feature '" + feature.Id + "' threw from Apply(): " + ex);
                     }
                 }
             }

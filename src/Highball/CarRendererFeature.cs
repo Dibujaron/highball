@@ -1,3 +1,4 @@
+using System;
 using System.Collections.Generic;
 using System.Globalization;
 using UnityEngine;
@@ -183,9 +184,21 @@ namespace Highball
         /// </summary>
         public void ReleaseAll()
         {
+            // Each car's Release is isolated in its own try/catch, matching the plan's
+            // global fan-out constraint: if one throws, the loop must still reach every
+            // other car and still reach _held.Clear() below, rather than aborting partway
+            // and leaving the remaining cars' shadows suppressed for the rest of the
+            // session.
             for (int i = _held.Count - 1; i >= 0; i--)
             {
-                Release(_held[i]);
+                try
+                {
+                    Release(_held[i]);
+                }
+                catch (Exception ex)
+                {
+                    Main.Log("CarRendererFeature: Release() threw from ReleaseAll(): " + ex.Message);
+                }
             }
 
             _held.Clear();

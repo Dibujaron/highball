@@ -49,11 +49,15 @@ Settings are available in two places:
   attributes — there is no custom settings window there. Tooltips on each field explain
   what it does.
 - **A Highball tab in Railroader's own in-game preferences window**, added via a Harmony
-  patch so the same settings can be tuned without relaunching. It mirrors the UMM panel's
-  ranges and gating: a feature's tuning sliders are only interactable while that feature's
-  own toggle is on, and the same `[experimental]` labels appear in both places. If the
-  patch fails (e.g. an incompatible game update), it logs why and leaves the preferences
-  window untouched — the UMM panel is always the fallback.
+  patch so the most-used settings can be tuned without relaunching. Slider ranges match
+  the UMM panel's, and a feature's tuning sliders are only interactable while that
+  feature's own toggle is on, the same gating the UMM panel's `VisibleOn` gives — but the
+  tab is not a full mirror of the UMM panel: it does not expose `LowSolverIterations` or
+  either cadence setting (`RefreshIntervalSeconds`, `EvaluateIntervalSeconds`), and its
+  label for solver iteration LOD reads "(no measured benefit)" rather than the UMM panel's
+  `[experimental]`, since that feature has since been measured and killed. If the patch
+  fails (e.g. an incompatible game update), it logs why and leaves the preferences window
+  untouched — the UMM panel is always the fallback.
 
 ## Building
 
@@ -110,9 +114,11 @@ one named feature (`ExperimentTarget`) between baseline and active windows, stam
 row `BASELINE` or `ACTIVE` instead, so that feature's effect can be isolated without the
 player running a manual protocol. Toggling the A/B experiment mid-session does **not** start
 a new file — `LIVE` and `ACTIVE`/`BASELINE` rows can both appear in the same CSV, in
-sequence. The file only rolls over to a new one (`...-2.csv`, `...-3.csv`, ...) if the set
-of enabled features or the experiment target actually changes, since that changes what the
-columns or the mode labels mean.
+sequence. The file rolls over to a new one (`...-2.csv`, `...-3.csv`, ...) whenever the
+set of enabled features, the experiment target, or any tunable recorded on the
+`# SETTINGS` line (e.g. moving the car shadow or tree billboard distance sliders
+mid-session) actually changes, since any of those changes what the columns, the mode
+labels, or the numbers themselves mean.
 
 If `ExperimentTarget` names a feature that's missing, disabled, or has an inert `Active`
 setter, Highball logs a loud warning at startup — an A/B whose two arms are actually

@@ -229,9 +229,32 @@ the game.
 
 ## Cleanups owed
 
-- Remove `SleepMinDistanceMeters` and `RequiredStationarySeconds` — dead, see above.
-- Log lines read `[Highball] [Highball]`; UMM already adds the prefix, so drop ours.
-- `ExperimentTarget` is a free-text field wanting a technical id (`solver_lod`) that the
-  panel gives the player no way to discover. Make it a dropdown.
-- Settings are only reachable from the main menu in this game, so changing features
-  mid-session means a trip out. Worth knowing when planning a measurement run.
+All three cleanups noted at the end of session 1 are done:
+
+- `SleepMinDistanceMeters` and `RequiredStationarySeconds` are gone; `Settings.cs` has no
+  trace of either, and `StationarySleepFeature` was never built.
+- The doubled `[Highball] [Highball]` log prefix is gone — `Main.Log` logs the message
+  alone, since UMM's own logger already adds the mod's display-name prefix.
+- `ExperimentTarget` staying a free-text `[Draw(Type = DrawType.Field)]` rather than a
+  dropdown is deliberate, not outstanding: UMM's `PopupList` draw type hard-checks
+  `FieldType.IsEnum` and throws for a string field, so a dropdown is not achievable without
+  changing the setting's underlying type (which would break existing saved settings files).
+  The field's tooltip lists the four valid ids (`car_renderer_lod`, `solver_lod`,
+  `terrain_lod`, `sleep_headroom`) instead.
+
+Also resolved since session 1, though not originally listed here: settings being reachable
+only from the main menu is no longer the whole story — `GamePreferencesPatch.cs` adds a
+Highball tab to Railroader's own in-game preferences window, so most settings can now be
+tuned mid-session without a trip out.
+
+Outstanding:
+
+- The in-game tab is not a full mirror of the UMM panel: it does not expose
+  `LowSolverIterations` or either cadence setting (`RefreshIntervalSeconds`,
+  `EvaluateIntervalSeconds`), so tuning those still requires the UMM panel (and, for
+  `RefreshIntervalSeconds`/`EvaluateIntervalSeconds`, a trip to the main menu, per the
+  original bullet above).
+- The in-game tab's label for solver iteration LOD reads "(no measured benefit)" instead
+  of the UMM panel's `[experimental]` — deliberate, since that feature has since been
+  measured and killed (see Results above), but the two panels' labels for that one
+  feature no longer match and a reader comparing them side-by-side should know why.

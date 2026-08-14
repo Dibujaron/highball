@@ -192,6 +192,19 @@ namespace Highball
 
                 s.Applied = false;
             }
+
+            // Clear the table, not just Applied: the guard in Apply() that re-captures on
+            // an outside change (e.g. QualitySettings.SetQualityLevel from the Graphics tab
+            // that lives in the same window as this one) only runs `else if (s.Applied)`,
+            // so a re-enable after this ReleaseAll would otherwise find a stale, still-held
+            // TerrainState and skip that guard entirely — writing back originals captured
+            // before the quality change and silently clobbering whatever the player set in
+            // between. Clearing here means the next Apply() sees no TerrainState at all and
+            // re-captures fresh originals from scratch, exactly like discovering the
+            // terrain for the first time. _reported is intentionally a separate field: it
+            // must not be reset here, or the "N terrain(s). Game defaults: ..." log line
+            // would re-fire on every enable/disable cycle instead of once per session.
+            _terrains.Clear();
         }
 
         public string[] TelemetryHeaders
