@@ -278,6 +278,16 @@ namespace Highball
 
                     b.AddField("Inventory", () => Main.RenderInventoryStatus(),
                         UIPanelBuilder.Frequency.Periodic);
+
+                    b.AddFieldToggle("Patch census", () => s.EnablePatchCensus,
+                        v => { s.EnablePatchCensus = v; s.OnChange(); }, true)
+                     .Tooltip("Harmony patch census (read-only)",
+                        "One-shot census of which mods patch which game methods, reported to the "
+                        + "log — including whether anything patches the train/air simulation hot "
+                        + "path. Toggle off and on to run it again.");
+
+                    b.AddField("Patches", () => Main.PatchCensusStatus(),
+                        UIPanelBuilder.Frequency.Periodic);
                 }, 8f);
             }
             catch (Exception ex)

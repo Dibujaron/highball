@@ -86,6 +86,17 @@ namespace Highball
                       + "and on to run it again.")]
         public bool EnableRenderInventory = false;
 
+        /// <summary>
+        /// Read-only one-shot census of every Harmony patch in the process, by owner and
+        /// by target — the attribution probe's blind spot made visible, since a patch's
+        /// cost executes inside the patched method's time.
+        /// </summary>
+        [Draw("Harmony patch census (read-only)", Type = DrawType.Toggle, Box = true, Collapsible = true,
+              Tooltip = "One-shot census of which mods patch which game methods, reported to the "
+                      + "log — including whether anything patches the train/air simulation hot "
+                      + "path. Toggle off and on to run it again.")]
+        public bool EnablePatchCensus = false;
+
         // --- telemetry ---
 
         /// <summary>

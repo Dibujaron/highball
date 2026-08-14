@@ -27,6 +27,7 @@ namespace Highball
         private static FrameBudgetProbe _budget;
         private static ScriptAttributionProbe _scripts;
         private static RenderInventoryProbe _renderInventory;
+        private static PatchCensusProbe _patchCensus;
         private static Harmony _harmony;
 
         private static float _refreshTimer;
@@ -42,6 +43,7 @@ namespace Highball
             _budget = new FrameBudgetProbe();
             _scripts = new ScriptAttributionProbe();
             _renderInventory = new RenderInventoryProbe(_registry.Cars);
+            _patchCensus = new PatchCensusProbe();
             _host = new FeatureHost(new IFeature[]
             {
                 // Priority order == claim order: FeatureHost.Apply offers each car to
@@ -56,7 +58,8 @@ namespace Highball
                 // Read-only and never claim. Kept last so mutating features stay first.
                 _budget,
                 _scripts,
-                _renderInventory
+                _renderInventory,
+                _patchCensus
             });
 
             // A car reaped by discovery may still be claimed by a feature; hand it back
@@ -237,6 +240,11 @@ namespace Highball
         internal static string RenderInventoryStatus()
         {
             return _renderInventory != null ? _renderInventory.StatusLine() : "n/a";
+        }
+
+        internal static string PatchCensusStatus()
+        {
+            return _patchCensus != null ? _patchCensus.StatusLine() : "n/a";
         }
 
         /// <summary>
