@@ -76,6 +76,16 @@ namespace Highball
                       + "mods' methods, so it ships off and costs a second or two at startup.")]
         public bool EnableScriptAttribution = false;
 
+        /// <summary>
+        /// Read-only one-shot census of renderers, materials and shaders, answering whether
+        /// the measured zero-batching (batches == draw_calls) is fixable from a mod.
+        /// </summary>
+        [Draw("Render inventory probe (read-only)", Type = DrawType.Toggle, Box = true, Collapsible = true,
+              Tooltip = "One-shot census of renderers, unique materials, instancing flags and "
+                      + "shaders, reported to the log. Costs one hitch when it runs; toggle off "
+                      + "and on to run it again.")]
+        public bool EnableRenderInventory = false;
+
         // --- telemetry ---
 
         /// <summary>

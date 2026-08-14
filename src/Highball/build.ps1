@@ -62,6 +62,7 @@ $sources = @(
     (Join-Path $here "TerrainLodFeature.cs"),
     (Join-Path $here "FrameBudgetProbe.cs"),
     (Join-Path $here "ScriptAttributionProbe.cs"),
+    (Join-Path $here "RenderInventoryProbe.cs"),
     (Join-Path $here "Telemetry.cs"),
     (Join-Path $here "GamePreferencesPatch.cs"),
     (Join-Path $here "Properties\AssemblyInfo.cs")

@@ -268,6 +268,16 @@ namespace Highball
 
                     b.AddField("Methods", () => Main.ScriptAttributionStatus(),
                         UIPanelBuilder.Frequency.Periodic);
+
+                    b.AddFieldToggle("Render inventory", () => s.EnableRenderInventory,
+                        v => { s.EnableRenderInventory = v; s.OnChange(); }, true)
+                     .Tooltip("Render inventory probe (read-only)",
+                        "One-shot census of renderers, unique materials, instancing flags and "
+                        + "shaders, reported to the log. Costs one hitch when it runs; toggle "
+                        + "off and on to run it again.");
+
+                    b.AddField("Inventory", () => Main.RenderInventoryStatus(),
+                        UIPanelBuilder.Frequency.Periodic);
                 }, 8f);
             }
             catch (Exception ex)
