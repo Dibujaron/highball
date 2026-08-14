@@ -122,12 +122,19 @@ namespace Highball
         // --- experiment ---
 
         /// <summary>
-        /// Automatically alternate between baseline and active windows and log both,
-        /// so the effect can be measured without the player running a protocol.
+        /// Telemetry is recorded every session regardless of this setting. Turning this on
+        /// additionally alternates <see cref="ExperimentTarget"/> between baseline and
+        /// active windows and logs both, so that one feature's effect can be measured
+        /// without the player running a protocol. Normal play does not need this: leave it
+        /// off and every row is simply stamped LIVE, reflecting whatever each feature's own
+        /// toggle says.
         /// </summary>
-        [Draw("Run A/B experiment (alternates every window)", Type = DrawType.Toggle,
-              Box = true, Collapsible = true)]
-        public bool RunExperiment = true;
+        [Draw("Run A/B experiment (alternates one feature)", Type = DrawType.Toggle,
+              Box = true, Collapsible = true,
+              Tooltip = "Measurement mode, not normal operation: alternates ExperimentTarget between "
+                      + "baseline and active windows and logs both so its effect can be isolated. "
+                      + "Telemetry is recorded either way; normal use does not need this on.")]
+        public bool RunExperiment = false;
 
         [Draw("Experiment window (s)", Type = DrawType.Slider, Min = 10, Max = 120, Precision = 0,
               VisibleOn = "RunExperiment|true")]

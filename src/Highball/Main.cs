@@ -11,9 +11,11 @@ namespace Highball
     /// rolling stock, computes per-car facts once per pass, and arbitrates which feature
     /// may act on which car.
     ///
-    /// Ships with an A/B harness enabled by default, because the performance hypotheses
-    /// tried on this problem so far were wrong when measured, and the next one deserves
-    /// evidence too.
+    /// Telemetry is recorded every session regardless of settings. The optional A/B
+    /// harness that alternates a single feature between baseline and active windows is
+    /// off by default — the hypotheses tried on this problem so far were wrong when
+    /// measured, so ordinary play now just records LIVE numbers; A/B remains available
+    /// for whenever the next hypothesis needs the same evidence.
     /// </summary>
     public static class Main
     {
@@ -131,10 +133,9 @@ namespace Highball
                     _host.Tick(dt);
                 }
 
-                if (Settings.Instance.RunExperiment)
-                {
-                    _telemetry.Tick(deltaTime);
-                }
+                // Telemetry is recorded every session; RunExperiment only controls whether
+                // Telemetry additionally alternates one feature between windows.
+                _telemetry.Tick(deltaTime);
             }
             catch (Exception ex)
             {

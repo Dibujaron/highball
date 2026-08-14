@@ -7,16 +7,19 @@ using UnityEngine;
 namespace Highball
 {
     /// <summary>
-    /// Alternates a single targeted feature between baseline and active windows and
-    /// records frame timings for each, so the effect can be measured without the player
-    /// doing anything.
+    /// Records frame timings every session, regardless of settings, so results can be
+    /// read back later. By default every row is stamped LIVE: each feature simply holds
+    /// whatever its own toggle says, with nothing alternated.
     ///
-    /// Alternating rather than running one long A then one long B matters: it controls for
-    /// whatever the player happens to be doing, which drifts over a session.
+    /// When <see cref="Settings.RunExperiment"/> is turned on, it additionally alternates
+    /// the single feature named by <see cref="Settings.ExperimentTarget"/> between
+    /// baseline and active windows, stamping each ACTIVE/BASELINE, so that one feature's
+    /// effect can be measured without the player running a protocol. Alternating rather
+    /// than running one long A then one long B matters there: it controls for whatever
+    /// the player happens to be doing, which drifts over a session. Every other feature
+    /// still holds whatever its own toggle says, so an fps delta can always be attributed
+    /// to the one feature under test rather than to all of them at once.
     ///
-    /// Only <see cref="Settings.ExperimentTarget"/> flips between windows. Every other
-    /// feature holds whatever its own toggle says, so an fps delta can always be
-    /// attributed to the one feature under test rather than to all of them at once.
     /// The CSV columns are composed from whichever features are enabled: base columns
     /// first, then each enabled feature's own TelemetryHeaders/TelemetryValues, walked in
     /// the same FeatureHost.Features order so columns never silently misalign.
@@ -290,8 +293,12 @@ namespace Highball
 
         internal void Tick(float deltaTime)
         {
-            // Settling after a switch: drive the clock but do not count these frames.
-            if (_settleRemaining > 0f)
+            // Settling after a switch: drive the clock but do not count these frames. Only
+            // meaningful while the A/B experiment is alternating arms — LIVE mode (the
+            // default) never switches anything, so there is no transient to settle after
+            // and frames are never discarded here regardless of what _settleRemaining was
+            // last set to.
+            if (Settings.Instance.RunExperiment && _settleRemaining > 0f)
             {
                 _settleRemaining -= deltaTime;
                 return;
@@ -382,6 +389,23 @@ namespace Highball
             return cells.ToArray();
         }
 
+        /// <summary>
+        /// The `mode` column's value for the row about to be written. LIVE whenever
+        /// RunExperiment is off — normal operation, where every feature simply follows
+        /// its own Enabled toggle and there are no arms to distinguish. ACTIVE/BASELINE
+        /// only mean something while the A/B harness is alternating the experiment
+        /// target between windows.
+        /// </summary>
+        private string ModeLabel()
+        {
+            if (!Settings.Instance.RunExperiment)
+            {
+                return "LIVE";
+            }
+
+            return _activeWindow ? "ACTIVE" : "BASELINE";
+        }
+
         private void FlushWindow()
         {
             if (_frames > 0 && _windowElapsed > 0f)
@@ -405,7 +429,7 @@ namespace Highball
                 var cells = new List<string>
                 {
                     DateTime.Now.ToString("HH:mm:ss.fff", CultureInfo.InvariantCulture),
-                    _activeWindow ? "ACTIVE" : "BASELINE",
+                    ModeLabel(),
                     _windowElapsed.ToString("F2", CultureInfo.InvariantCulture),
                     _frames.ToString(CultureInfo.InvariantCulture),
                     avgFrameMs.ToString("F3", CultureInfo.InvariantCulture),
@@ -431,6 +455,16 @@ namespace Highball
 
         private void SwitchMode()
         {
+            if (!Settings.Instance.RunExperiment)
+            {
+                // LIVE mode: nothing alternates, so there is no arm to switch to and no
+                // settle delay to serve. ApplyMode already pins every feature to its own
+                // Enabled toggle regardless of _activeWindow whenever RunExperiment is
+                // off (see its `alternating` flag) — leaving _activeWindow untouched here
+                // does not change what any feature does.
+                return;
+            }
+
             _activeWindow = !_activeWindow;
             ApplyMode();
             _settleRemaining = SettleSeconds;
@@ -480,13 +514,12 @@ namespace Highball
         /// attributed to any one of them.
         ///
         /// Checking RunExperiment here (rather than trusting _activeWindow alone) matters
-        /// because Tick() is the only thing that ever advances _activeWindow, and Main stops
-        /// calling Tick the moment RunExperiment goes false. Without this check, turning the
-        /// experiment off while the window happens to be BASELINE would leave the target
-        /// pinned Active=false forever, since nothing would ever run ApplyMode again to
-        /// un-pin it. With it, SettingsChanged()'s re-run of ApplyMode immediately treats
-        /// every feature as the "pin active" branch once RunExperiment is off, regardless of
-        /// whatever _activeWindow was last left at.
+        /// because _activeWindow goes stale the moment RunExperiment turns false: SwitchMode
+        /// stops advancing it once the experiment is off (see SwitchMode's own guard), so it
+        /// keeps whatever value A/B alternation last left it at. Without this check, turning
+        /// the experiment off while the window happens to be BASELINE would leave the target
+        /// pinned Active=false forever. With it, every feature takes the "pin active" branch
+        /// once RunExperiment is off, regardless of whatever _activeWindow was last left at.
         ///
         /// A feature that is Enabled but not Active must claim nothing and release
         /// everything, so a BASELINE window is a true control. Switching a feature to
