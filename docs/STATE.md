@@ -130,6 +130,30 @@ and bound by bogie/coupler joints often fail to auto-sleep. On this save they sl
 `StationarySleepFeature` will not be built. The probe itself was deleted on 2026-08-14 —
 its question is answered and re-asking it is a `git show` away.
 
+### Tree crossfade — NULL, measured 2026-08-14
+
+`TerrainLodFeature` writes `treeCrossFadeLength` straight from the slider, without the
+`ClampReduction` its three siblings go through, so the shipped default of 20 m was being
+written over the game's own 5 m. Since crossfade is the band where a tree renders *both*
+its mesh and its billboard, blended, a 20 m band against a 19.6 m billboard distance meant
+very nearly every visible tree was drawn twice — on a feature whose whole thesis is that
+billboards batch and meshes do not.
+
+Mechanically sound. Measured, it bought nothing:
+
+| Arm | Windows | Mean fps | SD | Mean moving |
+|---|---|---|---|---|
+| crossfade 20 m | 21 | **45.79** | 4.95 | 80.3 |
+| crossfade 4.8 m | 23 | **45.51** | 7.00 | 87.7 |
+
+0.28 fps apart, wrong direction, against a per-arm SD of 5–7. Adjusting for the second
+run's ~7 extra moving cars puts the crossfade arm about 1.3 fps ahead, which is 0.7
+standard errors — nothing. Not a controlled A/B (sequential runs, uncontrolled workload),
+so it is weaker evidence than the solver-LOD kill, but it is nowhere near a signal.
+
+Keep crossfade at ~5 anyway: writing 4× the game's own value was never justified. Just do
+not count it as a gain. This is the third good-sounding mechanism to buy nothing.
+
 ### Discovery — confirmed working
 
 ```
@@ -138,6 +162,41 @@ Discovery: 519 culler records -> 519 tracked (rb on root: 0, rb in children: 519
 
 0 of 519 cars carry a rigidbody on the root; all 519 carry one in a child, exactly as
 predicted. The child-search fallback is what makes the mod able to act at all.
+
+## The strongest signal so far: framerate scales with moving cars
+
+Measured 2026-08-14, from 44 telemetry windows across the two runs above. Regressing the
+`fps` column on the `moving` column:
+
+| | n | r | Slope |
+|---|---|---|---|
+| Run 2 (09:49) | 23 | **−0.671** | −0.237 fps per moving car |
+| Run 1 (09:31) | 21 | −0.350 | −0.157 |
+| **Pooled** | **44** | **−0.573** | **−0.210** |
+
+Each additional moving car costs roughly **0.21 fps**. Over the observed range (50 → 116
+moving) that is a ~14 fps swing — an order of magnitude larger than anything any feature
+here has moved. For contrast, the AE probe's correlation against *consist* count was
+−0.059, i.e. noise. This is the first relationship in the project that is clearly not.
+
+Two things make it more than a restatement of "busy scenes are slower":
+
+- `moving` counts cars anywhere in the world, not just on-screen. It tracks AI activity
+  across the map rather than camera proximity.
+- Moving cars are, near enough, the awake rigidbodies: the sleep probe found ~87% of cars
+  asleep, so `moving` is close to a direct count of what PhysX actually simulates. Solver
+  LOD cut *iterations* on exactly those bodies and bought nothing, which points away from
+  iteration count and toward per-body costs — broadphase, contact generation, or the
+  bogie/coupler joints.
+
+**Confounds, unresolved.** More moving cars usually means being near a yard or junction,
+which also means more scenery, more decals and more of everything else on screen. Moving
+consists also bring wheel and rod animation, smoke and sound sources with them. This
+establishes *what scales*, not *which subsystem*, and the telemetry cannot separate them.
+
+What it does give the profiler is a reproducible condition and a specific question, which
+none of the three killed hypotheses ever had: drive until `moving` is above 100, attach,
+and ask where the per-moving-car cost lands.
 
 ## Decisions and constraints
 
@@ -176,30 +235,39 @@ The child search is essential; root-only returns null for every car.
 
 ## Open threads
 
-**Physics is not the problem.** Three physics hypotheses are now dead with evidence: AE
-planning (0.23% of wall time vs a 2% threshold), stationary sleep (0.31% addressable vs a
-10% threshold), and solver LOD (−0.18 fps over 5+5 windows). By elimination, rendering-CPU
-is the leading remaining suspect.
+**Four hypotheses are now dead with evidence**: AE planning (0.23% of wall time vs a 2%
+threshold), stationary sleep (0.31% addressable vs a 10% threshold), solver LOD (−0.18 fps
+over 5+5 windows) and tree crossfade (−0.28 fps over 21+23 windows). Three of the four were
+mechanically sound arguments that simply did not show up in the framerate.
 
-1. **Tree LOD — the current lead.** Spec at
-   `docs/superpowers/specs/2026-08-13-tree-lod-design.md`. Shorten the distance at which a
-   tree becomes a batched billboard, and cap how many render at full 3D LOD, without
-   touching density. Unity draws 3D terrain trees individually but batches billboards, so
-   this is primarily a draw-call reduction — a CPU saving, which is the side the evidence
-   points at.
-2. **Rendering-CPU more broadly.** The community's most effective workaround is zooming the
+1. **Profile the game — now the lead, ahead of any new hypothesis.** See the section
+   below. Four hypotheses have each cost a bespoke instrument to kill, and the one real
+   signal in the data (moving cars, above) names a symptom rather than a subsystem. Guessing
+   has a 0-for-4 record here; stop.
+2. **The per-moving-car cost**, once the profiler says which subsystem carries it. If it is
+   PhysX per-body rather than per-iteration, solver LOD failing makes sense and the knob to
+   look for is a different one. If it is rendering that merely correlates with moving cars,
+   that redirects to the decal/livery suspicion below.
+3. **Rendering-CPU more broadly.** The community's most effective workaround is zooming the
    camera fully in (2 fps → 15–20). Camera zoom changes *rendering* work, not physics work.
    With 519 cars, MSLDecalPack and three livery packs, and Giraffe Lab's own release note
    about "adaptive decal culling… with many nearby train cars", this fits the evidence well.
-3. "Better AE" as a *correctness* mod: re-plan triggers, and switch contention between
-   trains. Known affordable.
-4. `detailObjectDistance` for grass and ground detail, as a sibling of the tree work.
+4. "Better AE" as a *correctness* mod: re-plan triggers, and switch contention between
+   trains. Known affordable, and independent of all of the above.
 
-## Profile the game — probably higher value than more guessing
+Tree LOD and `detailObjectDistance` were the previous lead; both are built, both ship off,
+and neither has shown a measurable gain. They stay available but are no longer the thread
+to pull.
 
-Three hypotheses have now been killed by building bespoke instrumentation for each one.
-A profiler would have answered all three in an afternoon. This should probably come before
-the next hypothesis rather than after it.
+## Profile the game — decided 2026-08-14, this is the next work
+
+Four hypotheses have now been killed by building bespoke instrumentation for each one. A
+profiler would have answered all four in an afternoon. Agreed on 2026-08-14 to do this
+before any further hypothesis.
+
+Nothing needed is installed yet, verified on 2026-08-14: no AMD μProf, no Unity Editor or
+standalone profiler, and only VS 2019 Build Tools (no full Visual Studio, so no VS
+performance profiler either). Every route below therefore starts with a download.
 
 Two facts make it tractable, both verified on the install:
 

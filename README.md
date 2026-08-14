@@ -11,18 +11,22 @@ consists degrades framerate badly, on hardware that should be nowhere near its l
 
 Every feature in this mod exists because a measurement justified it, and every feature
 ships with its own off switch. That discipline exists because it was learned the hard way.
-Three physics hypotheses have now been measured and killed:
+Four hypotheses have now been measured and killed:
 
 | Hypothesis | Measured | Threshold | Verdict |
 | --- | --- | --- | --- |
 | Auto Engineer planning cost | 0.23% of wall time | 2% | Dead — AE plans at roughly 1 Hz per consist, not every tick. |
 | Stationary sleep (forcing parked cars to sleep) | 0.31% of tracked cars addressable | 10% | Dead before it was built — PhysX already sleeps nearly every parked car on its own. |
 | Solver iteration LOD on distant, steady rolling stock | −0.18 fps over five 30 s windows per arm (BASELINE vs. ACTIVE) | — | Dead — measurably no benefit, in the wrong direction, against a ±9 fps noise floor. |
+| Tree crossfade length (mod was writing 4× the game's own value, so near every visible tree drew twice) | −0.28 fps over 21 vs. 23 windows | — | Null — mechanically sound, invisible in the framerate. |
 
-**Physics is not the bottleneck.** By elimination, rendering-CPU is the leading remaining
-suspect — the community's most effective workaround (zooming the camera fully in) changes
-rendering work, not physics work. The two LOD features below target that suspect; neither
-has been measured in-game yet, so both ship off. Full detail lives in `docs/STATE.md`.
+Three of those four were sound mechanical arguments that simply never showed up in the
+framerate. The one clear signal in the data so far is not a feature at all: across 44
+telemetry windows, framerate tracks the number of *moving* cars at **r = −0.57, about
+−0.21 fps per moving car** — a ~14 fps swing over the observed range, and an order of
+magnitude larger than anything any feature here has moved. That names a symptom, not a
+subsystem, so the next step is a profiler rather than a fifth hypothesis. Full detail lives
+in `docs/STATE.md`.
 
 Nothing here ships on "seems like it should help." A feature either carries its own
 evidence, or it stays behind an explicit `[experimental]` label until it does. A feature
