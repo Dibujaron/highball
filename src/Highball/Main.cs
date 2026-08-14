@@ -1,4 +1,5 @@
 using System;
+using HarmonyLib;
 using UnityEngine;
 using UnityModManagerNet;
 
@@ -27,6 +28,7 @@ namespace Highball
         private static FeatureHost _host;
         private static Telemetry _telemetry;
         private static SleepHeadroomProbe _probe;
+        private static Harmony _harmony;
 
         private static float _refreshTimer;
         private static float _evalTimer;
@@ -65,6 +67,19 @@ namespace Highball
 
             _telemetry = new Telemetry(_host, _registry, _evaluator);
             _telemetry.Init();
+
+            // In-game preferences tab: purely additive, and entirely best-effort. A failure
+            // here must never fail the whole mod load — the UMM panel is always the
+            // fallback, so this is wrapped on its own rather than allowed to propagate.
+            try
+            {
+                _harmony = new Harmony("highball");
+                GamePreferencesPatch.Apply(_harmony);
+            }
+            catch (Exception ex)
+            {
+                Log("In-game settings tab unavailable: " + ex.Message);
+            }
 
             modEntry.OnToggle = OnToggle;
             modEntry.OnUpdate = OnUpdate;
@@ -190,12 +205,43 @@ namespace Highball
 
             _registry?.Clear();
             _telemetry?.Shutdown();
+
+            // Unpatch before releasing the reference so a UMM reload (unload then load
+            // again in the same process) can never stack a second copy of the postfix
+            // onto BuildTabs.
+            try
+            {
+                _harmony?.UnpatchAll("highball");
+            }
+            catch (Exception ex)
+            {
+                Log("Failed to unpatch in-game settings tab: " + ex.Message);
+            }
+            _harmony = null;
+
             return true;
         }
 
         public static void Log(string msg)
         {
             ModEntry?.Logger.Log("[Highball] " + msg);
+        }
+
+        /// <summary>
+        /// Small internal accessors so GamePreferencesPatch's live Diagnostics label can
+        /// show the same mode/rows readout Main.OnGUI already shows, without making
+        /// _telemetry (or Telemetry's internals) public. Guarded against _telemetry being
+        /// null: the in-game tab can in principle be rendered before Load finishes
+        /// constructing it, or after OnUnload has torn it down.
+        /// </summary>
+        internal static string TelemetryModeLabel()
+        {
+            return _telemetry != null ? _telemetry.ModeLabel() : "n/a";
+        }
+
+        internal static int TelemetryRowsWritten()
+        {
+            return _telemetry != null ? _telemetry.RowsWritten : 0;
         }
 
         /// <summary>

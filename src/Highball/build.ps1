@@ -36,6 +36,7 @@ $refs = @(
     "UnityEngine.PhysicsModule.dll",
     "UnityEngine.IMGUIModule.dll",
     "UnityEngine.TerrainModule.dll",
+    "Unity.TextMeshPro.dll",
     "Assembly-CSharp.dll",
     "Definition.dll",
     "UnityModManager\UnityModManager.dll",
@@ -61,6 +62,7 @@ $sources = @(
     (Join-Path $here "TerrainLodFeature.cs"),
     (Join-Path $here "SleepHeadroomProbe.cs"),
     (Join-Path $here "Telemetry.cs"),
+    (Join-Path $here "GamePreferencesPatch.cs"),
     (Join-Path $here "Properties\AssemblyInfo.cs")
 )
 
