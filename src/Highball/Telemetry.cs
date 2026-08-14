@@ -50,11 +50,15 @@ namespace Highball
         private int _rolloverCount;
 
         /// <summary>
-        /// The joined Ids of the feature set the currently-open file's header describes.
-        /// FlushWindow compares against this every row so a mid-session Enabled toggle
-        /// rolls over to a new file instead of silently shifting columns under a stale one.
+        /// The drift key (joined Ids of the enabled feature set, plus ExperimentTarget) that
+        /// the currently-open file's banner and header describe. FlushWindow compares against
+        /// this every row so a mid-session Enabled toggle OR a mid-session ExperimentTarget
+        /// edit rolls over to a new file instead of silently reinterpreting columns, or rows,
+        /// under a stale banner. A target edit alone does not change any column, but it does
+        /// change what ACTIVE/BASELINE mean for every row written after it, so it must roll
+        /// over just as surely as a column change would.
         /// </summary>
-        private string _headerFeatureIds;
+        private string _headerDriftKey;
 
         internal string CsvPath { get; private set; }
         internal bool ActiveWindow => _activeWindow;
@@ -171,11 +175,12 @@ namespace Highball
                 _writer.WriteLine("# SESSION " + DateTime.Now.ToString("o", CultureInfo.InvariantCulture)
                                   + " features=" + enabledJoin
                                   + " target=" + Settings.Instance.ExperimentTarget);
+                _writer.WriteLine("# " + SettingsLine());
                 _writer.WriteLine(string.Join(",", FullHeader()));
 
                 ValidateFeatureTelemetryLengths();
 
-                _headerFeatureIds = enabledJoin;
+                _headerDriftKey = DriftKey(enabledJoin);
                 CsvPath = path;
                 _rolloverCount = attempt;
 
@@ -273,6 +278,42 @@ namespace Highball
         }
 
         /// <summary>
+        /// The value FlushWindow rolls over on: the enabled feature set (which columns
+        /// depend on) plus ExperimentTarget (which what ACTIVE/BASELINE mean depends on).
+        /// Either one changing mid-session makes every later row incomparable with the
+        /// rows already in the open file, so both belong in the same drift key.
+        /// </summary>
+        private string DriftKey(string enabledJoin)
+        {
+            return enabledJoin + "|target=" + Settings.Instance.ExperimentTarget;
+        }
+
+        private string DriftKey()
+        {
+            return DriftKey(string.Join("|", EnabledFeatures()));
+        }
+
+        /// <summary>
+        /// One extra header line recording every tunable that can change what the CSV's
+        /// numbers mean — most importantly MovingSpeedThreshold, which determines the
+        /// `moving` column and therefore the headroom verdict the whole harness exists to
+        /// inform. Two files with different values here are not comparable, and without
+        /// this line that difference would be invisible to a reader who flat-reads every
+        /// CSV into one dataframe.
+        /// </summary>
+        private string SettingsLine()
+        {
+            Settings s = Settings.Instance;
+            return string.Format(CultureInfo.InvariantCulture,
+                "SETTINGS min_distance_m={0} steady_accel_threshold={1} required_steady_s={2} " +
+                "moving_speed_threshold={3} low_solver_iterations={4} refresh_interval_s={5} " +
+                "evaluate_interval_s={6} experiment_window_s={7}",
+                s.MinDistanceMeters, s.SteadyAccelThreshold, s.RequiredSteadySeconds,
+                s.MovingSpeedThreshold, s.LowSolverIterations, s.RefreshIntervalSeconds,
+                s.EvaluateIntervalSeconds, s.ExperimentWindowSeconds);
+        }
+
+        /// <summary>
         /// Walks _host.Features in order, appending each enabled feature's headers. The row
         /// builder in FlushWindow must walk the same array with the same Enabled filter, or
         /// columns silently misalign with values.
@@ -293,13 +334,16 @@ namespace Highball
         {
             if (_frames > 0 && _windowElapsed > 0f)
             {
-                // A mid-session Enabled toggle (Task 7 adds a live per-feature toggle)
-                // changes what FullHeader() and the cells below would produce. Roll over to
-                // a new file rather than re-emit a second header into this one. Skipped once
-                // _writer is null: telemetry already failed and stays permanently degraded.
-                if (_writer != null && string.Join("|", EnabledFeatures()) != _headerFeatureIds)
+                // A mid-session Enabled toggle changes what FullHeader() and the cells below
+                // would produce; a mid-session ExperimentTarget edit changes what ACTIVE and
+                // BASELINE mean without changing a single column. Either drifts the open
+                // file's banner out from under its own rows, so both roll over to a new file
+                // rather than re-emit a second header into this one, or silently reinterpret
+                // rows under the old one. Skipped once _writer is null: telemetry already
+                // failed and stays permanently degraded.
+                if (_writer != null && DriftKey() != _headerDriftKey)
                 {
-                    Main.Log("Telemetry: enabled feature set changed; rolling over to a new file.");
+                    Main.Log("Telemetry: enabled feature set or experiment target changed; rolling over to a new file.");
                     OpenNewFile();
                 }
 
@@ -358,10 +402,39 @@ namespace Highball
         }
 
         /// <summary>
+        /// Called from Settings.OnChange, i.e. on every settings-panel edit, since UMM does
+        /// not say which field changed. Any edit can invalidate the in-flight window — it may
+        /// now span frames measured under two different configurations — so this discards
+        /// the window's accumulated frames without flushing them, re-arms the settle timer as
+        /// if a mode switch had just happened, and re-runs ApplyMode so the new settings
+        /// (including a possible RunExperiment or ExperimentTarget change) take effect
+        /// immediately rather than waiting for a natural window boundary that, if
+        /// RunExperiment was just turned off, will never come.
+        /// </summary>
+        internal void SettingsChanged()
+        {
+            _frames = 0;
+            _frameSeconds = 0f;
+            _windowElapsed = 0f;
+            _settleRemaining = SettleSeconds;
+            ApplyMode();
+        }
+
+        /// <summary>
         /// Only the feature under test (Settings.ExperimentTarget) alternates with
-        /// _activeWindow. Every other feature is pinned Active so its own Enabled toggle is
-        /// the sole thing controlling it. Flipping all of them at once would confound the
-        /// comparison, since an fps delta could not be attributed to any one of them.
+        /// _activeWindow, and only while RunExperiment is on. Every other feature is pinned
+        /// Active so its own Enabled toggle is the sole thing controlling it. Flipping all of
+        /// them at once would confound the comparison, since an fps delta could not be
+        /// attributed to any one of them.
+        ///
+        /// Checking RunExperiment here (rather than trusting _activeWindow alone) matters
+        /// because Tick() is the only thing that ever advances _activeWindow, and Main stops
+        /// calling Tick the moment RunExperiment goes false. Without this check, turning the
+        /// experiment off while the window happens to be BASELINE would leave the target
+        /// pinned Active=false forever, since nothing would ever run ApplyMode again to
+        /// un-pin it. With it, SettingsChanged()'s re-run of ApplyMode immediately treats
+        /// every feature as the "pin active" branch once RunExperiment is off, regardless of
+        /// whatever _activeWindow was last left at.
         ///
         /// A feature that is Enabled but not Active must claim nothing and release
         /// everything, so a BASELINE window is a true control. Switching a feature to
@@ -373,10 +446,11 @@ namespace Highball
         {
             IFeature[] features = _host.Features;
             string target = Settings.Instance.ExperimentTarget;
+            bool alternating = Settings.Instance.RunExperiment;
 
             for (int i = 0; i < features.Length; i++)
             {
-                bool value = features[i].Id == target ? _activeWindow : true;
+                bool value = (alternating && features[i].Id == target) ? _activeWindow : true;
 
                 // Set the flag before attempting release, so a throwing ReleaseAll can
                 // never prevent this or any later feature's Active flag from being set.

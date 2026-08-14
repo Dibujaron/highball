@@ -151,14 +151,18 @@ namespace Highball
                     CarFacts initialFacts = default(CarFacts);
                     initialFacts.Speed = rb.velocity.magnitude;
 
+                    // OriginalSolverIterations and IsDowngraded are left at their default
+                    // (0 / false) here deliberately. They are SolverLodFeature's own scratch
+                    // fields (see TrackedCar), and TryClaim re-captures the real original
+                    // solver-iteration count itself before its first downgrade — a capture
+                    // here would never be what gets restored, only a dead write that invites
+                    // the next reader to trust it.
                     var tracked = new TrackedCar
                     {
                         Id = car.id,
                         Car = car,
                         Rigidbody = rb,
-                        Facts = initialFacts,
-                        OriginalSolverIterations = rb.solverIterations,
-                        IsDowngraded = false
+                        Facts = initialFacts
                     };
 
                     _cars.Add(tracked);

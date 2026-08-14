@@ -71,19 +71,19 @@ rigidbody then silently never runs. Discovery must fall back to
 `GetComponentInChildren<Rigidbody>(true)`, and must report which path succeeded so a
 zero-tracked result is visible rather than silent.
 
-## Current work: `src/StockPhysicsLOD`
+## Current work: `src/Highball`
 
 Reduces PhysX `solverIterations` (6 → 2) on cars that are >500 m from camera **and** have
-been under 0.5 m/s² for 3 continuous seconds. Targets the gap RollingStock Optimizer leaves
-by design: it never touches *moving* cars, and Discord consensus is that moving stock is
-the dominant cost.
+been under 0.5 m/s² for 3 continuous seconds. Distant, steadily-moving rolling stock is
+otherwise never reduced in fidelity, and Discord consensus is that moving stock is the
+dominant cost.
 
 Safety model is restore-biased: downgrades require sustained calm, restores are immediate
 and unconditional, and everything is handed back on toggle-off and unload. Solver settings
 are runtime-only and never persist to the save.
 
 Ships with an A/B harness that alternates BASELINE/ACTIVE every 30 s, discarding 2 s after
-each switch, logging to `%LOCALLOW%\Giraffe Lab LLC\Railroader\StockPhysicsLOD.csv`.
+each switch, logging to `%LOCALLOW%\Giraffe Lab LLC\Railroader\Highball-<timestamp>.csv`.
 
 ### Results so far — INCONCLUSIVE, do not treat as a win
 
@@ -129,7 +129,7 @@ the Mono BCL that Railroader ships — which is also more faithful, since that i
 mods actually execute on.
 
 ```powershell
-.\src\StockPhysicsLOD\build.ps1 -Deploy
+.\src\Highball\build.ps1 -Deploy
 ```
 
 Car discovery pattern (no public API exists):
@@ -143,7 +143,7 @@ The child search is essential; root-only returns null for every car.
 
 ## Open threads
 
-1. Run the real A/B on `StockPhysicsLOD` (≥4 min) and decide whether solver LOD helps.
+1. Run the real A/B on `Highball` (≥4 min) and decide whether solver LOD helps.
 2. If it doesn't: **rendering-CPU is the leading remaining suspect.** The community's most
    effective workaround is zooming the camera fully in (2 fps → 15–20). Camera zoom changes
    *rendering* work, not physics work. With 519 cars, MSLDecalPack and three livery packs,

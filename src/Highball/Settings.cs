@@ -31,6 +31,10 @@ namespace Highball
         public float RequiredSteadySeconds = 3f;
 
         /// <summary>Speed (m/s) above which a car counts as moving, for reporting only.</summary>
+        [Draw("Moving speed threshold (m/s)", Type = DrawType.Slider, Min = 0.01, Max = 2,
+              Precision = 2,
+              Tooltip = "Speed above which a car counts as \"moving\" for reporting. Determines the "
+                      + "moving/stationary split the headroom verdict is judged against.")]
         public float MovingSpeedThreshold = 0.1f;
 
         // --- features ---
@@ -62,20 +66,24 @@ namespace Highball
         // --- reserved for StationarySleepFeature, gated on the headroom probe result ---
 
         [Draw("Sleep min distance (m)", Type = DrawType.Slider, Min = 100, Max = 3000, Precision = 0,
-              VisibleOn = "EnableSleepHeadroomProbe|true",
               Tooltip = "Reserved for StationarySleepFeature, which does not exist yet. "
                       + "Has no effect until that feature is built.")]
         public float SleepMinDistanceMeters = 500f;
 
         [Draw("Required stationary time (s)", Type = DrawType.Slider, Min = 0.5, Max = 15, Precision = 1,
-              VisibleOn = "EnableSleepHeadroomProbe|true",
               Tooltip = "Reserved for StationarySleepFeature, which does not exist yet. "
                       + "Has no effect until that feature is built.")]
         public float RequiredStationarySeconds = 5f;
 
         // --- cadence ---
 
+        [Draw("Refresh interval (s)", Type = DrawType.Slider, Min = 0.5, Max = 10, Precision = 2,
+              Tooltip = "How often the car registry re-scans the scene for rolling stock.")]
         public float RefreshIntervalSeconds = 2f;
+
+        [Draw("Evaluate interval (s)", Type = DrawType.Slider, Min = 0.05, Max = 2, Precision = 2,
+              Tooltip = "How often eligibility is re-evaluated for every tracked car. Lower values cost "
+                      + "more CPU; this is a performance mod, so 0 would defeat its own purpose.")]
         public float EvaluateIntervalSeconds = 0.25f;
 
         // --- experiment ---
@@ -113,6 +121,11 @@ namespace Highball
             // a value changed but not which, so ask every feature whether its toggle still
             // agrees with what it is holding.
             Main.ReleaseDisabledFeatures();
+
+            // Any edit can also invalidate telemetry's in-flight window (it may now span two
+            // configurations) or leave the experiment target mis-pinned if RunExperiment was
+            // the field that changed. Discard the window and re-apply the current mode.
+            Main.TelemetrySettingsChanged();
         }
     }
 }

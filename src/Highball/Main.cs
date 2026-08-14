@@ -209,5 +209,18 @@ namespace Highball
                 }
             }
         }
+
+        /// <summary>
+        /// Also called from Settings.OnChange, alongside ReleaseDisabledFeatures. Tells
+        /// Telemetry to discard whatever window is in flight and re-apply the current mode,
+        /// so a settings edit mid-window never flushes a row mixing two configurations and
+        /// RunExperiment being switched off never leaves the experiment target pinned
+        /// inactive forever. Guarded against _telemetry being null for the same reason as
+        /// ReleaseDisabledFeatures: OnChange can fire before Load finishes constructing it.
+        /// </summary>
+        internal static void TelemetrySettingsChanged()
+        {
+            _telemetry?.SettingsChanged();
+        }
     }
 }

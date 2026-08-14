@@ -17,12 +17,15 @@ namespace Highball
         /// <summary>Facts computed once per pass by the Evaluator. Shared by every feature.</summary>
         internal CarFacts Facts;
 
-        /// <summary>Name of the feature currently holding this car at reduced fidelity, if any.</summary>
-        internal string ClaimedBy;
-
-        // --- feature scratch fields, owned by SolverLodFeature. General rather than
-        // feature-private because more than one feature may need to remember an
-        // original solver-iteration count if a later feature also touches it. ---
+        // --- feature scratch fields, private to SolverLodFeature. Claim arbitration only
+        // guarantees that one feature ACTS on a given car in a given pass; it says nothing
+        // about these fields, which persist across passes and are read by Release, which
+        // every feature is asked to call on every car regardless of who claimed it. A second
+        // mutating feature must NOT reuse OriginalSolverIterations or IsDowngraded — doing so
+        // would let it clear SolverLodFeature's flag while SolverLodFeature still lists the
+        // car in its own _held list, desyncing that invariant permanently. A second mutating
+        // feature needs its own state, keyed by car (e.g. its own dictionary or held-set),
+        // not these fields. ---
         internal int OriginalSolverIterations;
         internal bool IsDowngraded;
     }

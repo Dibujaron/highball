@@ -62,28 +62,38 @@ namespace Highball
                         feature.Release(car);
                     }
                 }
-
-                car.ClaimedBy = claimed;
             }
         }
 
-        /// <summary>Every feature releases this one car. Used when a car leaves the world.</summary>
+        /// <summary>
+        /// Every feature releases this one car. Used when a car leaves the world, from
+        /// CarRegistry.OnCarRemoved. Each feature's Release(car) is isolated in its own
+        /// try/catch, matching the other ReleaseAll overload and Telemetry.ApplyMode: a throw
+        /// from one feature must not stop a later feature from releasing, and must not
+        /// propagate into CarRegistry.Refresh's outer catch and abort the whole reaping pass
+        /// — which would leave every car after the throwing one, in every remaining pass,
+        /// still claimed and still at reduced fidelity.
+        /// </summary>
         internal void ReleaseAll(TrackedCar car)
         {
             for (int i = 0; i < _features.Length; i++)
             {
-                _features[i].Release(car);
+                try
+                {
+                    _features[i].Release(car);
+                }
+                catch (Exception ex)
+                {
+                    Main.Log("Feature '" + _features[i].Id + "' threw from Release(): " + ex);
+                }
             }
-
-            car.ClaimedBy = null;
         }
 
         /// <summary>
         /// Every feature releases everything, regardless of its enabled state — a feature
         /// switched off at runtime must still hand back what it was holding. This is the
         /// mod's only unconditional-restore path, so one feature throwing must not stop
-        /// the rest from releasing, and no car may be left naming a feature that already
-        /// let go of it.
+        /// the rest from releasing.
         /// </summary>
         internal void ReleaseAll(IList<TrackedCar> cars)
         {
@@ -96,14 +106,6 @@ namespace Highball
                 catch (Exception ex)
                 {
                     Main.Log("Feature '" + _features[i].Id + "' threw from ReleaseAll(): " + ex);
-                }
-            }
-
-            for (int i = 0; i < cars.Count; i++)
-            {
-                if (cars[i] != null)
-                {
-                    cars[i].ClaimedBy = null;
                 }
             }
         }
