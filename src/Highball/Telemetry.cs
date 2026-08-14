@@ -142,6 +142,56 @@ namespace Highball
                          "inert Active setter; its value never changes. The A/B harness will alternate " +
                          "nothing; both arms will be identical.");
             }
+
+            WarnIfStarvedByPriority(feature, target);
+        }
+
+        /// <summary>
+        /// FeatureHost.Apply offers each car to ICarFeatures in _host.Features array order;
+        /// the first enabled, active one to claim a car wins it, and every later feature
+        /// never sees that car at all. If the experiment target sits behind another
+        /// enabled ICarFeature in that order, the earlier feature can claim cars the target
+        /// would otherwise have claimed — most obviously when the earlier feature's own
+        /// distance threshold is shorter, but claim priority alone is enough regardless of
+        /// settings, since which feature gets first refusal never depends on either
+        /// feature's configured distance. Left as a warning only: this does not reorder or
+        /// disable anything, it only makes a target that reads zero (or two identical A/B
+        /// arms) traceable to a cause instead of a mystery.
+        /// </summary>
+        private void WarnIfStarvedByPriority(IFeature feature, string target)
+        {
+            if (!(feature is ICarFeature))
+            {
+                return;
+            }
+
+            IFeature[] features = _host.Features;
+            int targetIndex = -1;
+            for (int i = 0; i < features.Length; i++)
+            {
+                if (features[i].Id == target)
+                {
+                    targetIndex = i;
+                    break;
+                }
+            }
+
+            if (targetIndex <= 0)
+            {
+                return;
+            }
+
+            for (int i = 0; i < targetIndex; i++)
+            {
+                if (features[i] is ICarFeature && features[i].Enabled)
+                {
+                    Main.Log("Telemetry: ExperimentTarget '" + target + "' (" + feature.DisplayName + ") sits " +
+                             "behind enabled feature '" + features[i].Id + "' (" + features[i].DisplayName +
+                             ") in claim priority order. '" + features[i].Id + "' may claim cars before the " +
+                             "target ever sees them, so the target's telemetry may read zero and both A/B " +
+                             "arms may be identical.");
+                }
+            }
         }
 
         /// <summary>

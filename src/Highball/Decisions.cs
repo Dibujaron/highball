@@ -82,5 +82,24 @@ namespace Highball
 
             return distance > threshold;
         }
+
+        /// <summary>
+        /// Caps a preferred hysteresis margin so it can never reach the threshold itself.
+        /// A margin at or beyond the threshold makes ShouldSuppressAtDistance's restore
+        /// test (`distance >= threshold - margin`) true at every distance once suppressed,
+        /// meaning a suppressed object could never be un-suppressed by moving closer,
+        /// however close it gets. Settings sliders are configured independently of any
+        /// feature's fixed preferred margin, so a small enough threshold value (e.g. this
+        /// mod's own slider minimum) can reach that condition. Capping at half the
+        /// threshold guarantees the restore band never swallows the whole eligible range;
+        /// clamping at zero guarantees a degenerate (zero or negative) threshold can never
+        /// produce a negative margin.
+        /// </summary>
+        internal static float EffectiveHysteresis(float threshold, float preferredMargin)
+        {
+            float cap = threshold * 0.5f;
+            float margin = preferredMargin < cap ? preferredMargin : cap;
+            return margin < 0f ? 0f : margin;
+        }
     }
 }

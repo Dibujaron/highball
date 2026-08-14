@@ -39,7 +39,12 @@ namespace Highball
             _probe = new SleepHeadroomProbe(_registry.Cars);
             _host = new FeatureHost(new IFeature[]
             {
-                // Priority order. Sleep, once it exists, goes ahead of solver LOD.
+                // Priority order == claim order: FeatureHost.Apply offers each car to
+                // ICarFeatures in this array's order, and the first enabled+active one to
+                // claim it wins, so an earlier feature with a shorter distance threshold
+                // will starve a later one of cars it would otherwise have claimed (see
+                // Telemetry.WarnIfStarvedByPriority). Sleep, once it exists, goes ahead of
+                // solver LOD.
                 new CarRendererFeature(),
                 new SolverLodFeature(),
                 // Acts on terrains, not cars, so it never claims and its position here

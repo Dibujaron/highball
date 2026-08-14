@@ -49,10 +49,19 @@ namespace Highball
 
         public bool TryClaim(TrackedCar car)
         {
+            float threshold = Settings.Instance.CarShadowDistanceMeters;
+
+            // The slider's own minimum (50) equals the preferred hysteresis margin, which
+            // would make ShouldSuppressAtDistance's restore test true at every distance
+            // once suppressed — a car could never regain its shadow by moving closer, no
+            // matter how close. EffectiveHysteresis caps the margin so it can never reach
+            // the threshold itself.
+            float margin = Decisions.EffectiveHysteresis(threshold, HysteresisMeters);
+
             bool want = Decisions.ShouldSuppressAtDistance(
                 car.Facts.Distance,
-                Settings.Instance.CarShadowDistanceMeters,
-                HysteresisMeters,
+                threshold,
+                margin,
                 car.ShadowsSuppressed);
 
             if (!want)
@@ -132,10 +141,14 @@ namespace Highball
         /// <summary>
         /// Gathers a car's renderers on first need. Re-gathers if any cached entry has
         /// died, since Railroader can add or remove child objects after we cached them.
+        /// Also re-gathers a cached zero-length array: without that, a car whose renderers
+        /// were not yet spawned on the first attempt would cache an empty array forever,
+        /// and a later stale-check that only looks for dead entries inside a non-empty
+        /// array would never notice it should try again.
         /// </summary>
         private static bool Gather(TrackedCar car)
         {
-            bool stale = car.Renderers == null;
+            bool stale = car.Renderers == null || car.Renderers.Length == 0;
 
             if (!stale)
             {

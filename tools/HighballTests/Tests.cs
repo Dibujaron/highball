@@ -61,6 +61,14 @@ internal static class Tests
         Check(Decisions.ShouldSuppressAtDistance(250f, 300f, 50f, true), "band edge stays suppressed");
         Check(!Decisions.ShouldSuppressAtDistance(300f, 300f, 50f, false), "threshold itself does not suppress");
 
+        // EffectiveHysteresis: the margin must never reach the threshold itself, or
+        // ShouldSuppressAtDistance's restore test degenerates to "always suppressed".
+        CheckFloat(Decisions.EffectiveHysteresis(300f, 50f), 50f, "hysteresis cap: preferred margin wins when small enough");
+        CheckFloat(Decisions.EffectiveHysteresis(50f, 50f), 25f, "hysteresis cap: degenerate threshold==margin caps at half, not 50");
+        CheckFloat(Decisions.EffectiveHysteresis(10f, 50f), 5f, "hysteresis cap: tiny threshold caps to half of itself");
+        CheckFloat(Decisions.EffectiveHysteresis(0f, 50f), 0f, "hysteresis cap: zero threshold never goes negative");
+        CheckFloat(Decisions.EffectiveHysteresis(-10f, 50f), 0f, "hysteresis cap: negative threshold never goes negative");
+
         Console.WriteLine(_failed == 0 ? "ALL PASS" : _failed + " FAILED");
         return _failed == 0 ? 0 : 1;
     }
