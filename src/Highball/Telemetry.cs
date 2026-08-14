@@ -279,13 +279,15 @@ namespace Highball
 
         /// <summary>
         /// The value FlushWindow rolls over on: the enabled feature set (which columns
-        /// depend on) plus ExperimentTarget (which what ACTIVE/BASELINE mean depends on).
-        /// Either one changing mid-session makes every later row incomparable with the
-        /// rows already in the open file, so both belong in the same drift key.
+        /// depend on) plus ExperimentTarget (which what ACTIVE/BASELINE mean depends on),
+        /// plus the tuning settings whose values determine what the data columns mean
+        /// (most critically MovingSpeedThreshold). Any of these changing mid-session makes
+        /// every later row incomparable with the rows already in the open file, so all
+        /// belong in the same drift key.
         /// </summary>
         private string DriftKey(string enabledJoin)
         {
-            return enabledJoin + "|target=" + Settings.Instance.ExperimentTarget;
+            return enabledJoin + "|target=" + Settings.Instance.ExperimentTarget + "|" + SettingsLine();
         }
 
         private string DriftKey()
