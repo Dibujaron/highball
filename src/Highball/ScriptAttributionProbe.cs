@@ -26,6 +26,22 @@ namespace Highball
     /// the broadest thing in this mod by a distance. It ships off, patches under its own
     /// Harmony id so it can be removed without touching the preferences patch, and isolates
     /// every individual Patch call so one unpatchable method cannot abort the sweep.
+    ///
+    /// It also times other mods' Harmony PATCH methods. The patch census
+    /// (PatchCensusProbe) showed DPC holds 2 postfixes on TrainController.FixedUpdate, a
+    /// postfix inside LocomotiveAirSystem.UpdateAir, and 5 patches on
+    /// Car.SendPropertyChange; Legos mods hold per-movement hooks
+    /// (WearForMovement/OilUseForMovement). A patch executes inside the patched method's
+    /// time, so all of that currently masquerades as base-game cost in both the frame
+    /// budget and the method rankings above. Timing the patch methods directly separates
+    /// it — without disabling any mod, which matters because DPC is load-bearing for the
+    /// player's MU consists mid-session.
+    ///
+    /// Caveat: this measures the patch METHOD bodies only. Harmony's stub overhead
+    /// (argument marshaling and the like) and transpiler-injected IL remain invisible, and
+    /// a patch call site the JIT already inlined into a generated replacement bypasses our
+    /// detour entirely — so if a known-hot patch reports 0 calls/s, the detour did not
+    /// take, and the per-owner numbers must be read as a lower bound, never an acquittal.
     /// </summary>
     internal sealed class ScriptAttributionProbe : IFeature
     {
@@ -43,6 +59,13 @@ namespace Highball
             internal string Label;
             internal long Ticks;
             internal long Calls;
+
+            /// <summary>
+            /// Harmony owner id when this counter times a foreign PATCH method; null for the
+            /// ordinary MonoBehaviour counters. A field rather than a label prefix parse so
+            /// an owner id containing ':' cannot split the grouping.
+            /// </summary>
+            internal string Owner;
         }
 
         // Static because the Harmony patches are static and have no other route back here.
@@ -65,6 +88,8 @@ namespace Highball
         private float _timer;
         private int _patched;
         private int _failed;
+        private int _patchMethodsTimed;
+        private int _patchMethodsSkipped;
 
         public string Id { get { return "script_attrib"; } }
         public string DisplayName { get { return "Script attribution probe (read-only)"; } }
@@ -153,6 +178,10 @@ namespace Highball
                     }
                 }
 
+                // After the MonoBehaviour sweep, so our own timing patches are already in
+                // Harmony's tables and get filtered by owner/assembly rather than timed.
+                TimeForeignPatches(prefix, postfix);
+
                 _installed = true;
                 sw.Stop();
 
@@ -161,6 +190,9 @@ namespace Highball
                     "Timing adds roughly 75 ns per call; expect a few tenths of a ms per frame of " +
                     "overhead, enough to note but not enough to reorder the ranking.",
                     _patched, assemblies.Length, sw.Elapsed.TotalSeconds, _failed));
+                Main.Log(string.Format(CultureInfo.InvariantCulture,
+                    "ScriptAttrib: also timing {0} foreign Harmony patch methods ({1} skipped/failed).",
+                    _patchMethodsTimed, _patchMethodsSkipped));
             }
             catch (Exception ex)
             {
@@ -218,6 +250,111 @@ namespace Highball
             }
         }
 
+        /// <summary>
+        /// Wraps every other mod's prefix/postfix/finalizer methods with the same timing
+        /// pair the MonoBehaviour sweep uses, so their cost stops masquerading as the
+        /// patched game method's. Transpilers are skipped on purpose: they run once at
+        /// patch time, and the IL they injected is inherently untimeable from here.
+        ///
+        /// Deduplicated by MethodInfo: the same patch method registered on several targets
+        /// is timed once, and its counter then aggregates across all of them — which is
+        /// exactly what a per-owner cost wants.
+        /// </summary>
+        private void TimeForeignPatches(HarmonyMethod prefix, HarmonyMethod postfix)
+        {
+            Assembly self = typeof(ScriptAttributionProbe).Assembly;
+
+            foreach (MethodBase target in Harmony.GetAllPatchedMethods())
+            {
+                // Isolated per target: one unreadable patch table must not abort the sweep.
+                try
+                {
+                    if (target == null)
+                    {
+                        continue;
+                    }
+
+                    Patches info = Harmony.GetPatchInfo(target);
+                    if (info == null)
+                    {
+                        continue;
+                    }
+
+                    TimePatchList(info.Prefixes, "prefix", self, prefix, postfix);
+                    TimePatchList(info.Postfixes, "postfix", self, prefix, postfix);
+                    TimePatchList(info.Finalizers, "finalizer", self, prefix, postfix);
+                }
+                catch
+                {
+                    // Skip the entry; the totals will simply not include it.
+                }
+            }
+        }
+
+        private void TimePatchList(
+            IList<Patch> patches, string kind, Assembly self, HarmonyMethod prefix, HarmonyMethod postfix)
+        {
+            if (patches == null)
+            {
+                return;
+            }
+
+            for (int i = 0; i < patches.Count; i++)
+            {
+                try
+                {
+                    Patch p = patches[i];
+                    MethodInfo patchMethod = p != null ? p.PatchMethod : null;
+                    if (patchMethod == null)
+                    {
+                        continue;
+                    }
+
+                    // Our own instruments: timing our own timers would double-count every
+                    // MonoBehaviour call. Both filters, belt and braces — the owner id
+                    // catches patches we registered, the assembly check catches anything of
+                    // ours registered under an unexpected id.
+                    string owner = string.IsNullOrEmpty(p.owner) ? "(no owner id)" : p.owner;
+                    if (owner.StartsWith("highball", StringComparison.Ordinal)
+                        || ReferenceEquals(patchMethod.DeclaringType?.Assembly, self))
+                    {
+                        continue;
+                    }
+
+                    // Already timed via another target's patch list.
+                    if (Counters.ContainsKey(patchMethod))
+                    {
+                        continue;
+                    }
+
+                    if (patchMethod.ContainsGenericParameters || patchMethod.IsGenericMethod)
+                    {
+                        _patchMethodsSkipped++;
+                        continue;
+                    }
+
+                    _harmony.Patch(patchMethod, prefix, postfix);
+
+                    var counter = new Counter
+                    {
+                        Label = owner + ":" + (patchMethod.DeclaringType != null
+                                    ? patchMethod.DeclaringType.Name : "?")
+                                + "." + patchMethod.Name + " [" + kind + "]",
+                        Owner = owner
+                    };
+
+                    Counters[patchMethod] = counter;
+                    All.Add(counter);
+                    _patchMethodsTimed++;
+                }
+                catch
+                {
+                    // Un-patchable (Harmony internals, exotic signatures): tolerated, counted.
+                    _patchMethodsSkipped++;
+                }
+            }
+        }
+
         private static void TimingPrefix(ref long __state)
         {
             __state = Stopwatch.GetTimestamp();
@@ -248,10 +385,16 @@ namespace Highball
 
             All.Sort((x, y) => y.Ticks.CompareTo(x.Ticks));
 
+            // MonoBehaviour counters only: the patch counters get their own section below,
+            // and mixing them here would both muddy the Top 20's meaning and make this
+            // headline ms/s figure incomparable with earlier sessions' reports.
             double totalMs = 0;
             for (int i = 0; i < All.Count; i++)
             {
-                totalMs += ToMs(All[i].Ticks);
+                if (All[i].Owner == null)
+                {
+                    totalMs += ToMs(All[i].Ticks);
+                }
             }
 
             var sb = new StringBuilder();
@@ -269,11 +412,18 @@ namespace Highball
                     break;
                 }
 
+                if (c.Owner != null)
+                {
+                    continue;
+                }
+
                 sb.AppendLine(string.Format(CultureInfo.InvariantCulture,
                     "  {0,8:F2} ms/s  {1,9:F0} calls/s  {2}",
                     ToMs(c.Ticks) / seconds, c.Calls / seconds, c.Label));
                 shown++;
             }
+
+            AppendPatchOverhead(sb, seconds);
 
             // One multi-line call rather than 21 separate ones: UMM prefixes every Log with
             // the mod name, and 21 prefixed lines every window is noise in a log that has to
@@ -287,6 +437,77 @@ namespace Highball
             }
 
             _unattributed = 0;
+        }
+
+        /// <summary>
+        /// Section 2 of the report: foreign Harmony patch methods grouped by owner, then the
+        /// top individual patch methods. Assumes All is already sorted by ticks descending
+        /// (Report sorts before calling), so the first ten owner-tagged counters with time
+        /// ARE the top ten. Lower bound by construction — see the class comment.
+        /// </summary>
+        private void AppendPatchOverhead(StringBuilder sb, float seconds)
+        {
+            if (_patchMethodsTimed == 0)
+            {
+                return;
+            }
+
+            var byOwner = new Dictionary<string, Counter>();
+            for (int i = 0; i < All.Count; i++)
+            {
+                Counter c = All[i];
+                if (c.Owner == null || c.Ticks <= 0)
+                {
+                    continue;
+                }
+
+                Counter sum;
+                if (!byOwner.TryGetValue(c.Owner, out sum))
+                {
+                    sum = new Counter { Label = c.Owner };
+                    byOwner[c.Owner] = sum;
+                }
+
+                sum.Ticks += c.Ticks;
+                sum.Calls += c.Calls;
+            }
+
+            sb.AppendLine(string.Format(CultureInfo.InvariantCulture,
+                "Patch overhead by owner ({0} patch methods timed, {1} skipped; lower bound — " +
+                "inlined patch calls and Harmony stub overhead are invisible):",
+                _patchMethodsTimed, _patchMethodsSkipped));
+
+            if (byOwner.Count == 0)
+            {
+                sb.AppendLine("  (no timed patch method ran this window)");
+                return;
+            }
+
+            var owners = new List<Counter>(byOwner.Values);
+            owners.Sort((x, y) => y.Ticks.CompareTo(x.Ticks));
+
+            for (int i = 0; i < owners.Count; i++)
+            {
+                sb.AppendLine(string.Format(CultureInfo.InvariantCulture,
+                    "  {0,8:F2} ms/s  {1,9:F0} calls/s  {2}",
+                    ToMs(owners[i].Ticks) / seconds, owners[i].Calls / seconds, owners[i].Label));
+            }
+
+            sb.AppendLine("  top patch methods:");
+            int shown = 0;
+            for (int i = 0; i < All.Count && shown < 10; i++)
+            {
+                Counter c = All[i];
+                if (c.Owner == null || c.Ticks <= 0)
+                {
+                    continue;
+                }
+
+                sb.AppendLine(string.Format(CultureInfo.InvariantCulture,
+                    "  {0,8:F2} ms/s  {1,9:F0} calls/s  {2}",
+                    ToMs(c.Ticks) / seconds, c.Calls / seconds, c.Label));
+                shown++;
+            }
         }
 
         private static double ToMs(long ticks)
@@ -322,6 +543,8 @@ namespace Highball
             _installed = false;
             _patched = 0;
             _failed = 0;
+            _patchMethodsTimed = 0;
+            _patchMethodsSkipped = 0;
             _timer = 0f;
 
             Counters.Clear();
@@ -345,7 +568,7 @@ namespace Highball
                 return _installFailed ? "install failed" : "off";
             }
 
-            return _patched + " patched → log";
+            return _patched + "+" + _patchMethodsTimed + " patched → log";
         }
     }
 }
