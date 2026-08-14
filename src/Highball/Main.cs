@@ -25,6 +25,7 @@ namespace Highball
         private static FeatureHost _host;
         private static Telemetry _telemetry;
         private static FrameBudgetProbe _budget;
+        private static ScriptAttributionProbe _scripts;
         private static Harmony _harmony;
 
         private static float _refreshTimer;
@@ -38,6 +39,7 @@ namespace Highball
             _registry = new CarRegistry();
             _evaluator = new Evaluator();
             _budget = new FrameBudgetProbe();
+            _scripts = new ScriptAttributionProbe();
             _host = new FeatureHost(new IFeature[]
             {
                 // Priority order == claim order: FeatureHost.Apply offers each car to
@@ -49,8 +51,9 @@ namespace Highball
                 // doesn't affect arbitration. Kept after the car-acting features so
                 // priority order stays readable.
                 new TerrainLodFeature(),
-                // Read-only and never claims. Kept last so mutating features stay first.
-                _budget
+                // Read-only and never claim. Kept last so mutating features stay first.
+                _budget,
+                _scripts
             });
 
             // A car reaped by discovery may still be claimed by a feature; hand it back
@@ -221,6 +224,11 @@ namespace Highball
         internal static string FrameBudgetStatus()
         {
             return _budget != null ? _budget.StatusLine() : "n/a";
+        }
+
+        internal static string ScriptAttributionStatus()
+        {
+            return _scripts != null ? _scripts.StatusLine() : "n/a";
         }
 
         /// <summary>

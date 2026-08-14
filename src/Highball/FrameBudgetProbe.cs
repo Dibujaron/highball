@@ -64,11 +64,21 @@ namespace Highball
 
             internal bool Installed;
 
-            internal Bucket(string column, string parent, string child)
+            /// <summary>
+            /// Whether this bucket's start marker also counts a fixed-timestep iteration.
+            /// Set on exactly one bucket inside FixedUpdate. Everything in the dominant
+            /// bucket runs once per fixed STEP, not once per frame, so steps-per-frame is
+            /// what says whether lowering the physics tick rate would actually buy anything
+            /// — and it cannot be derived from the other columns.
+            /// </summary>
+            internal bool CountsFixedStep;
+
+            internal Bucket(string column, string parent, string child, bool countsFixedStep = false)
             {
                 Column = column;
                 Parent = parent;
                 Child = child;
+                CountsFixedStep = countsFixedStep;
             }
         }
 
@@ -111,7 +121,9 @@ namespace Highball
                 // presentation. Until this reads low too, "not GPU-bound" is not established.
                 new Bucket("wait_present_ms", "TimeUpdate", "WaitForLastPresentationAndUpdateTime"),
 
-                new Bucket("phys_fixed_ms", "FixedUpdate", "PhysicsFixedUpdate"),
+                // PhysicsFixedUpdate is the canonical once-per-fixed-step system, so it
+                // carries the step counter.
+                new Bucket("phys_fixed_ms", "FixedUpdate", "PhysicsFixedUpdate", true),
                 new Bucket("phys_update_ms", "PreUpdate", "PhysicsUpdate"),
                 new Bucket("phys_late_ms", "PreLateUpdate", "PhysicsLateUpdate"),
 
@@ -158,6 +170,7 @@ namespace Highball
         private Bucket[] _buckets;
         private bool _installed;
         private long _frames;
+        private long _fixedSteps;
 
         /// <summary>
         /// Set once Install has failed, so Tick stops retrying. Without it a failure would
@@ -302,7 +315,7 @@ namespace Highball
         /// marker after, each subsystem we want to time. Returns a new array; the input is
         /// never written to.
         /// </summary>
-        private static PlayerLoopSystem[] InsertMarkers(PlayerLoopSystem[] list, List<Bucket> wanted)
+        private PlayerLoopSystem[] InsertMarkers(PlayerLoopSystem[] list, List<Bucket> wanted)
         {
             var result = new List<PlayerLoopSystem>(list.Length + (wanted.Count * 2));
 
@@ -330,10 +343,18 @@ namespace Highball
                 // Captured by the closures below; each bucket gets its own pair.
                 Bucket b = bucket;
 
+                PlayerLoopSystem.UpdateFunction start = b.CountsFixedStep
+                    ? (PlayerLoopSystem.UpdateFunction)(() =>
+                    {
+                        b.Start = Stopwatch.GetTimestamp();
+                        _fixedSteps++;
+                    })
+                    : () => b.Start = Stopwatch.GetTimestamp();
+
                 result.Add(new PlayerLoopSystem
                 {
                     type = typeof(HighballFrameMarker),
-                    updateDelegate = () => b.Start = Stopwatch.GetTimestamp()
+                    updateDelegate = start
                 });
 
                 result.Add(list[i]);
@@ -528,7 +549,7 @@ namespace Highball
             get
             {
                 Bucket[] buckets = _buckets ?? MakeBuckets();
-                var cells = new List<string>(buckets.Length + 5) { "budget_frames" };
+                var cells = new List<string>(buckets.Length + 6) { "budget_frames", "fixed_steps" };
                 for (int i = 0; i < buckets.Length; i++)
                 {
                     cells.Add(buckets[i].Column);
@@ -547,9 +568,10 @@ namespace Highball
             get
             {
                 Bucket[] buckets = _buckets ?? MakeBuckets();
-                var cells = new List<string>(buckets.Length + 5)
+                var cells = new List<string>(buckets.Length + 6)
                 {
-                    _frames.ToString(CultureInfo.InvariantCulture)
+                    _frames.ToString(CultureInfo.InvariantCulture),
+                    _fixedSteps.ToString(CultureInfo.InvariantCulture)
                 };
 
                 for (int i = 0; i < buckets.Length; i++)

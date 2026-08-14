@@ -65,6 +65,17 @@ namespace Highball
                       + "into the update loop, so it ships off. Feeds extra telemetry columns.")]
         public bool EnableFrameBudgetProbe = false;
 
+        /// <summary>
+        /// Read-only, and the broadest thing here: it Harmony-patches every MonoBehaviour's
+        /// FixedUpdate and Update across every loaded assembly, including other mods'.
+        /// Ships off, unpatches on toggle-off.
+        /// </summary>
+        [Draw("Script attribution probe (read-only)", Type = DrawType.Toggle, Box = true, Collapsible = true,
+              Tooltip = "Splits the C# FixedUpdate/Update cost into a ranked list of which class and "
+                      + "which mod is spending it, reported to the log. Times hundreds of other "
+                      + "mods' methods, so it ships off and costs a second or two at startup.")]
+        public bool EnableScriptAttribution = false;
+
         // --- telemetry ---
 
         /// <summary>

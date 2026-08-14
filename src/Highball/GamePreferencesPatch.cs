@@ -223,6 +223,17 @@ namespace Highball
 
                     b.AddField("Per frame", () => Main.FrameBudgetStatus(),
                         UIPanelBuilder.Frequency.Periodic);
+
+                    b.AddFieldToggle("Script attribution", () => s.EnableScriptAttribution,
+                        v => { s.EnableScriptAttribution = v; s.OnChange(); }, true)
+                     .Tooltip("Script attribution probe (read-only)",
+                        "Splits the C# FixedUpdate/Update cost into a ranked list of which class and "
+                        + "which mod is spending it, written to the log every telemetry interval. "
+                        + "Times hundreds of other mods' methods, so it costs a second or two at "
+                        + "startup and a fraction of a millisecond per frame while running.");
+
+                    b.AddField("Attribution", () => Main.ScriptAttributionStatus(),
+                        UIPanelBuilder.Frequency.Periodic);
                 }, 8f);
 
                 panel.Spacer(16f);
