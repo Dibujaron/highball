@@ -65,9 +65,10 @@ That is a reasonable call and this spec follows it. It costs nothing in evidence
 
 - **Density is never touched.** Not `TreeDensity`, not `DetailDensity`, not
   `detailObjectDensity`. This is the entire point of the feature.
-- No changes to grass or detail objects. `detailObjectDistance` is left alone in this
-  spec; it is a plausible follow-up but a separate lever with a separate visual cost.
 - No custom LOD meshes, no asset replacement, no shader work.
+- No car-renderer work. Car rendering is the third sibling in this family and the leading
+  explanation for lategame lag (see below), but it is a separate feature with a separate
+  spec.
 
 ## The lever
 
@@ -80,6 +81,21 @@ Five terrain properties are in scope-adjacent territory. Only three are touched.
 | `treeCrossFadeLength` | **Yes — cosmetic** | Length of the fade between 3D and billboard. Raising it hides the pop that a shortened billboard distance would otherwise make obvious. |
 | `treeDistance` | **Never** | This is the *cull* distance. Lowering it makes trees vanish outright — precisely the "alien planet" outcome the owner rejected. |
 | `TreeDensity` / `detailObjectDensity` | **Never** | What the quality slider ruins. Pinned wherever the player set it. |
+
+### Ground detail
+
+The same shape applies to grass and ground detail, and is in scope for this feature:
+
+| Property | Touched | Rationale |
+|---|---|---|
+| `detailObjectDistance` | **Yes** | Draw distance for detail meshes. Shortening it stops drawing distant grass without thinning what remains. |
+| `detailObjectDensity` | **Never** | The density trap again. This is what makes the ground look bare. |
+
+`detailObjectDistance` is clamped against its captured original exactly like the tree
+values, and gets its own setting and telemetry column. It ships behind the same
+`EnableTreeLod` toggle rather than a second one — the two are the same idea applied to two
+object types, and splitting them would double the panel for no decision the player
+actually wants to make separately.
 
 ## Architecture
 
@@ -151,6 +167,7 @@ safe starting point until it looks wrong, rather than starting ugly.
 | `TreeBillboardDistanceMeters` | `60` | 10–250 | The main lever. Unity's own stock default is 50; Railroader sets its own value, reported in the first log line. |
 | `TreeMaxFullLodCount` | `50` | 0–250 | Unity's stock default is 50. |
 | `TreeCrossFadeLengthMeters` | `20` | 0–100 | Raise to hide the billboard pop. |
+| `DetailObjectDistanceMeters` | `80` | 10–250 | Grass and ground detail draw distance. Clamped like the tree values. |
 | `TreeRefreshIntervalSeconds` | `2` | 0.5–10 | How often terrains are re-enumerated and values re-applied. |
 
 Drawn by UMM from `[Draw]` attributes like every other Highball setting, with the tuning
@@ -175,11 +192,16 @@ where the configured value exceeds the original and the original must win.
 
 ## Telemetry
 
-`TreeLodFeature` contributes two columns: `terrains` (how many terrains were found and
-written) and `tree_billboard_distance` (what was actually applied). A row where `terrains`
-is `0` is the signal that the game does not use terrain trees and the whole feature is
-inert — the same "prove it is not silently doing nothing" discipline that the discovery
-diagnostics exist for.
+`TreeLodFeature` contributes three columns: `terrains` (how many terrains were found and
+written), `tree_billboard_distance` and `detail_object_distance` (what was actually
+applied, post-clamp). A row where `terrains` is `0` is the signal that the game does not use
+terrain trees and the whole feature is inert — the same "prove it is not silently doing
+nothing" discipline that the discovery diagnostics exist for, and the same discipline that
+caught `tracked=0` in session 1.
+
+Logging the post-clamp values matters: if Railroader already sets a shorter distance than
+the configured one, the clamp keeps the original and the column will show that the feature
+changed nothing, rather than the panel implying it did.
 
 Because the tuning values are part of the CSV drift key, changing any of them mid-session
 rolls over to a new file rather than leaving the banner describing rows it no longer
@@ -212,12 +234,27 @@ conflict today; the stale-original guard above is what protects against outside 
 5. Changing Railroader's graphics quality with the feature active must not leave terrain
    settings wrong after a subsequent toggle-off — this exercises the stale-original guard.
 
+## The third sibling: car renderers
+
+Not built here, but recorded because it is the strongest explanation for the symptom the
+owner actually reports, which is that lag arrives in the lategame rather than at any
+particular place.
+
+What grows monotonically through a save is the car count — currently 519. Session 3 killed
+car *physics* as a cost, but said nothing about car *rendering*: each car carries meshes, a
+livery (three livery packs are installed) and decals (MSLDecalPack), and Giraffe Lab's own
+release notes mention "adaptive decal culling… with many nearby train cars".
+
+That is the same draw-call-bound CPU cost as trees and ground detail, applied to a third
+object type, and it scales with progression in exactly the way described. Highball already
+tracks all 519 cars and holds a `Renderer[]`-shaped hole where this would go.
+
+It gets its own spec. Noted here so the family is visible: **trees, ground detail, car
+renderers** — one hypothesis, three surfaces.
+
 ## Open threads carried forward
 
-Unchanged by this spec:
-
-1. The ≥4 minute solver-LOD A/B, with `ExperimentTarget = "solver_lod"`.
-2. The sleep headroom probe's verdict, and whether `StationarySleepFeature` gets built.
-3. Better-AE as a correctness mod: re-plan triggers and switch contention.
-4. `detailObjectDistance` for grass and ground detail, as a possible sibling of this
-   feature.
+1. Better-AE as a correctness mod: re-plan triggers and switch contention. Known cheap.
+2. Car-renderer LOD, per the section above.
+3. The cleanups listed in `docs/STATE.md`: remove the dead sleep settings, drop the
+   doubled log prefix, and make `ExperimentTarget` a dropdown.
