@@ -222,6 +222,13 @@ attributed (~220 ms/s), the rest being coroutines, `Invoke`, `LateUpdate` (unpat
 Unity's own iteration overhead; and the traffic correlation aligns log windows to CSV
 windows by sequence rather than timestamp, since the log lines carry no timestamp.
 
+**CORRECTED the same evening** — this subsection counted only mods' own MonoBehaviour
+methods. A Harmony patch executes inside the *patched* method's time, so mod patches on
+game methods were being attributed to the base game. Measuring the patch methods directly
+(next section) moves roughly a quarter of `TrainController.FixedUpdate`'s 122 ms/s back
+onto one mod, and raises the true all-mods share of C# frame cost substantially above the
+one-fifth stated here. The PassengerHelper conclusion survives the correction.
+
 ### The lever this hands us
 
 `fixedDeltaTime` measures **exactly 20.0 ms (50 Hz)**, at 1.21 steps per frame. Everything
@@ -266,6 +273,67 @@ fidelity-trading feature is +10, and this one provably cannot reach it. The pred
 methodology note stands for future estimates: discount any "ms saved" by ~2× for the
 transfer rate. Caveat on the result itself: arms were sequential blocks, not interleaved,
 so location/time confounds are only controlled via the traffic covariate.
+
+## Mod patch overhead — measured 2026-08-14 (evening), and it revises the attribution
+
+Prompted by the owner's step-back question — players with more cars and more mods on
+lesser hardware do not all report this much lag, so what is different *here*? — the answer
+turned out to be a blind spot in our own attribution: a Harmony patch executes inside the
+patched method's time, so mod patches on game methods masquerade as base-game cost.
+
+Two instruments closed the gap the same evening. `PatchCensusProbe` (one-shot, read-only)
+enumerated every Harmony patch in the process: **DPC (Distributed-Power-Control) holds 2
+postfixes on `TrainController.FixedUpdate` itself, a postfix inside
+`LocomotiveAirSystem.UpdateAir`, and 5 patches on `Car.SendPropertyChange`**; Legos mods
+hold consumption/wear hooks (`WearForMovement`, `OilUseForMovement`, water/coal rates).
+Then `ScriptAttributionProbe` was extended (commit `9ee2ff8`) to Harmony-patch the patch
+methods themselves and time them — chosen over a disable-DPC A/B because DPC is
+load-bearing for the owner's MU consists mid-session, and this measures the same thing
+with zero disruption.
+
+Measured at end-of-day traffic, several MU consists (F7 A+B pairs) running:
+
+| Owner | ms/s | calls/s |
+|---|---|---|
+| **Distributed-Power-Control** | **40–44** | ~17,000 |
+| LegosLibraryOfStuff | ~20 | ~1,300 |
+| LegosBetterSteam | 9–11 | ~5,700 |
+| everything else | ~2 | — |
+| **Total foreign patch overhead** | **~75 ms/s (~1.7 ms/frame)** | |
+
+A stated **lower bound**: Harmony stub overhead and inlined patch call sites are invisible
+to this measurement.
+
+The headline item: **`MuAutomaticLightsHooksPatch.TrainControllerFixedUpdateLast` at
+17–19 ms/s over exactly 50 calls/s — ~0.36 ms per physics step, for a headlight-sync
+hook, running unconditionally every step** regardless of consist count. It alone is ~15%
+of the 122 ms/s previously attributed to vanilla `TrainController.FixedUpdate`.
+`DistributedMuPatch.Prefix` (on `Car.SendPropertyChange`) adds another 8–10 ms/s at
+~1,500 calls/s. The Legos water/coal consumption postfixes run ~600 calls/s each at
+~18 µs/call.
+
+Consequences:
+
+- **Roughly a quarter of the 122 ms/s "vanilla TrainController" figure is actually DPC
+  patch code executing inside it.** The "base game is four-fifths of C# cost, mods
+  one-fifth" claim in THE ANSWER is corrected above — it counted only mods' own
+  MonoBehaviours.
+- **The owner's instinct was partially vindicated**: players without DPC + the Legos steam
+  suite do not pay this ~75 ms/s. Part of "why is my game slower than everyone else's" now
+  has a named, measured answer.
+- The census's clean findings matter too: vanilla `Car.FixedUpdate` and `Hose.FixedUpdate`
+  carry **no foreign patches**, and PassengerHelper's 6 hooks are all UI/station logic,
+  nowhere near the frame path — the second vindication of not forking it.
+
+Actions, cheapest first:
+
+1. **Check DPC's own settings for a lights-sync toggle.** If the automatic-lights feature
+   can be turned off in its panel, that is ~18 ms/s back for free, with MU control kept.
+2. **Upstream bug report to DPC's author** with the per-call numbers: a lights hook has no
+   business running per physics step; event-driven sync is the proper fix and belongs in
+   DPC, not in a patch-on-a-patch from us.
+3. Same for the Legos consumption hooks if that author is reachable — ~18 µs per call at
+   600 calls/s each for a consumption-rate tweak suggests an easy win on their side.
 
 ## The signal that led here: framerate scales with moving cars
 
@@ -345,21 +413,28 @@ over 5+5 windows) and tree crossfade (−0.28 fps over 21+23 windows). Three of 
 mechanically sound arguments that simply did not show up in the framerate. **The bottleneck
 is now identified** — see THE ANSWER above — so what follows is work, not guesses.
 
-1. **Make `TrainController.FixedUpdate` cheaper — the active thread.** 12% of the frame
-   (2.97 ms) in one method, scaling at 0.55 ms/s per moving car. Being decompiled (to
-   scratch space only — decompiled game code never enters this repo) to see what it does
-   per step; a Harmony transpiler or a targeted skip would be far more invasive than
-   anything here so far, and could break the train sim outright. High value, high risk —
-   understand it before touching it. Note the transfer-rate cap applies here too: its full
-   2.97 ms/frame at ~45% transfer is ~+2.7 fps.
-2. ~~Rendering via flags.~~ **CLOSED, measured 2026-08-14** — see "Rendering-via-flags"
+1. **DPC settings check + upstream reports — the active thread, and the cheapest ever.**
+   See "Mod patch overhead" above. First look in DPC's own panel for a lights-sync toggle
+   (~18 ms/s back for free if it exists); then bug reports to the DPC and Legos authors
+   with the per-call numbers. No Highball code involved.
+2. **The air-throttle idea — deferred, and its prize just shrank.** The decompile (scratch
+   space only — decompiled game code never enters this repo) found the asymmetry: motion
+   integration sleeps when a consist is at rest, but `FixedUpdateAir` runs for every car
+   unconditionally — ~450 parked cars get a brake-line update plus two air sub-steps, 50
+   times a second. Throttling settled cars' air (~1 Hz with a scaled timestep, preserving
+   leakage rates) was estimated at +2–3 fps against the ~63 ms/s traffic-independent floor.
+   But the DPC lights hook (17–19 ms/s, per-step, traffic-independent) sits inside that
+   same floor, so the *vanilla* floor the throttle attacks is nearer ~44 ms/s — honest
+   recompute: **roughly +1.5–2 fps**, for a Harmony patch inside the core train sim. That
+   ratio is why it stays deferred behind the DPC route above.
+3. ~~Rendering via flags.~~ **CLOSED, measured 2026-08-14** — see "Rendering-via-flags"
    below. Instancing flip null, SRP Batcher already on, shader swap has no benefit
    available. Remaining rendering levers are draw-COUNT reduction only, i.e. the existing
    car/tree LOD features.
-3. ~~The physics tick-rate lever.~~ **Measured +3, cut** — see the section above.
-4. ~~`EventSystem.Update`~~ — resolved, not a defect: the player keeps several menus open
+4. ~~The physics tick-rate lever.~~ **Measured +3, cut** — see the section above.
+5. ~~`EventSystem.Update`~~ — resolved, not a defect: the player keeps several menus open
    on screen at all times, so continuous UI raycasting is expected behaviour.
-5. "Better AE" as a *correctness* mod: re-plan triggers, and switch contention between
+6. "Better AE" as a *correctness* mod: re-plan triggers, and switch contention between
    trains. Known affordable, and independent of all of the above.
 
 ### Rendering-via-flags — CLOSED, measured 2026-08-14

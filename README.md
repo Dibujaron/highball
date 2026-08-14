@@ -38,9 +38,13 @@ guess — and it answered the question in an afternoon:
 > complaint this project opened with: 12+ concurrent AI consists degrading framerate.
 
 For context, PhysX itself is 9.8% of the frame and the whole `FixedUpdate` phase is 46%.
-The base game accounts for roughly four-fifths of C# frame cost; **all mods combined are the
-other fifth**. Making that one method cheaper is the active line of work. Full detail lives
-in `docs/STATE.md`.
+An earlier reading — "the base game is four-fifths of C# cost, mods one-fifth" — was
+**corrected the same day**: it counted only mods' own methods, but a Harmony patch executes
+inside the *patched* method's time. Timing the patch methods directly found ~75 ms/s of
+mod patch overhead hiding inside game methods, including a Distributed-Power-Control
+headlight-sync hook costing ~0.36 ms per physics step inside `TrainController.FixedUpdate`
+itself — roughly a quarter of that method's measured cost belongs to the mod, not the
+game. Full detail lives in `docs/STATE.md`.
 
 Nothing here ships on "seems like it should help." A feature either carries its own
 evidence, or it stays behind an explicit `[experimental]` label until it does. A feature
@@ -55,7 +59,9 @@ they had. Their code is in the git history if the question ever reopens.
 | Tree & ground detail LOD | `terrain_lod` | Experimental, **off** by default | Draws distant trees as batched billboards and shortens ground-detail draw distance. Never changes density — the forest stays as thick as you set it. No measured gain yet, but draw-count reduction is the one rendering lever still open. |
 | Car renderer LOD | `car_renderer_lod` | Experimental, **off** by default | Stops distant rolling stock from casting shadows. Cars never disappear or change shape. Same rationale, and same unproven status, as the tree LOD. |
 | Frame budget probe | `frame_budget` | Read-only diagnostic, **off** by default | Times Unity's player-loop subsystems to say where the frame actually goes — physics, rendering, scripts, or waiting on the GPU. Changes no game state, but it inserts timing markers into the update loop. See below. |
-| Script attribution probe | `script_attrib` | Read-only diagnostic, **off** by default | Splits the C# `FixedUpdate`/`Update` cost into a ranked list of which class, in which assembly, is spending it — so a mod's cost is distinguishable from the base game's without disabling anything. Harmony-patches every `MonoBehaviour` in every loaded assembly, which makes it the broadest code here. Reports to the log. |
+| Script attribution probe | `script_attrib` | Read-only diagnostic, **off** by default | Splits the C# `FixedUpdate`/`Update` cost into a ranked list of which class, in which assembly, is spending it — so a mod's cost is distinguishable from the base game's without disabling anything. Also times other mods' Harmony patch methods and reports per-owner overhead. Harmony-patches every `MonoBehaviour` in every loaded assembly, which makes it the broadest code here. Reports to the log. |
+| Render inventory probe | `render_inventory` | Read-only diagnostic, **off** by default | One-shot census of renderers, unique materials, instancing flags, shaders (with property lists) and the render-pipeline asset, reported to the log. Built to answer why nothing batches; its answers closed the rendering-via-flags avenue. Toggle off and on to re-run. |
+| Harmony patch census | `patch_census` | Read-only diagnostic, **off** by default | One-shot census of every Harmony patch in the process: which game methods are patched, by which mod, with what patch kinds — the hot path (`TrainController` / `Car` / air / brake) reported first. Makes mod hooks on the frame path visible without disabling anything. Toggle off and on to re-run. |
 
 **The mod modifies PhysX and renderer state only at runtime and never persists any change
 to the save file.** Everything a feature claims is handed back on toggle-off and on mod
@@ -224,6 +230,15 @@ broadest thing in this repository. It ships off, patches under its own Harmony i
 removing it can't disturb the preferences-window patch, isolates every individual patch so
 one unpatchable method can't abort the sweep, and counts calls whose method fails to resolve
 rather than silently understating the ranking.
+
+It also times **other mods' Harmony patch methods**. A patch executes inside the patched
+method's time, so a mod's hook on a game method otherwise masquerades as base-game cost in
+every ranking above. The probe enumerates every foreign prefix/postfix/finalizer in the
+process, wraps each with the same timing pair, and appends a "Patch overhead by owner"
+section to the report — per-mod ms/s without disabling anything, which matters when the
+mods are load-bearing. Read it as a **lower bound**: Harmony's own stub overhead and any
+patch call site the JIT inlined are invisible, so a known-hot patch showing 0 calls/s means
+the detour didn't take, not that the patch is free.
 
 ## Prior art
 
