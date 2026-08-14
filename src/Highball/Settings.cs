@@ -63,6 +63,30 @@ namespace Highball
               Tooltip = "Measures how many cars are parked but still awake. Changes nothing.")]
         public bool EnableSleepHeadroomProbe = true;
 
+        [Draw("Tree & ground detail LOD  [experimental]", Type = DrawType.Toggle, Box = true, Collapsible = true,
+              Tooltip = "Draws distant trees as flat billboards and shortens ground-detail draw distance. "
+                      + "Never changes density — the forest stays as thick as you set it.")]
+        public bool EnableTerrainLod = false;
+
+        [Draw("Tree billboard distance (m)", Type = DrawType.Slider, Min = 10, Max = 250,
+              VisibleOn = "EnableTerrainLod|true",
+              Tooltip = "Past this distance a tree is drawn as a batched billboard instead of a 3D mesh.")]
+        public float TreeBillboardDistanceMeters = 60f;
+
+        [Draw("Max full-detail trees", Type = DrawType.Slider, Min = 0, Max = 250, Precision = 0,
+              VisibleOn = "EnableTerrainLod|true")]
+        public int TreeMaxFullLodCount = 50;
+
+        [Draw("Tree crossfade length (m)", Type = DrawType.Slider, Min = 0, Max = 100,
+              VisibleOn = "EnableTerrainLod|true",
+              Tooltip = "Softens the pop as a tree switches to a billboard.")]
+        public float TreeCrossFadeLengthMeters = 20f;
+
+        [Draw("Ground detail distance (m)", Type = DrawType.Slider, Min = 10, Max = 250,
+              VisibleOn = "EnableTerrainLod|true",
+              Tooltip = "Draw distance for grass and ground detail. Density is never changed.")]
+        public float DetailObjectDistanceMeters = 80f;
+
         // --- reserved for StationarySleepFeature, gated on the headroom probe result ---
 
         [Draw("Sleep min distance (m)", Type = DrawType.Slider, Min = 100, Max = 3000, Precision = 0,

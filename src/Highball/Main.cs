@@ -41,6 +41,10 @@ namespace Highball
             {
                 // Priority order. Sleep, once it exists, goes ahead of solver LOD.
                 new SolverLodFeature(),
+                // Acts on terrains, not cars, so it never claims and its position here
+                // doesn't affect arbitration. Kept after the car-acting features so
+                // priority order stays readable.
+                new TerrainLodFeature(),
                 // Read-only; never claims, so its position here doesn't affect
                 // arbitration. Kept last so mutating features stay first and readable.
                 _probe
