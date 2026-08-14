@@ -45,6 +45,22 @@ internal static class Tests
         Check(Decisions.ClassifyHeadroom(156, 519) == "real", "30.1% classifies as real");
         Check(Decisions.ClassifyHeadroom(0, 0) == "none", "zero tracked does not divide by zero");
 
+        // ClampReduction: a feature may only ever reduce work, never raise it.
+        CheckFloat(Decisions.ClampReduction(60f, 200f), 60f, "clamp keeps the lower configured value");
+        CheckFloat(Decisions.ClampReduction(300f, 120f), 120f, "clamp keeps the original when configured is higher");
+        CheckFloat(Decisions.ClampReduction(80f, 80f), 80f, "clamp is a no-op when equal");
+        Check(Decisions.ClampReductionInt(50, 200) == 50, "int clamp keeps the lower configured value");
+        Check(Decisions.ClampReductionInt(500, 50) == 50, "int clamp keeps the original when configured is higher");
+
+        // Hysteresis: suppress past the threshold, but do not restore until well inside it,
+        // so a car hovering at the boundary cannot thrash thousands of renderer writes.
+        Check(Decisions.ShouldSuppressAtDistance(310f, 300f, 50f, false), "suppresses past the threshold");
+        Check(!Decisions.ShouldSuppressAtDistance(290f, 300f, 50f, false), "does not suppress inside the threshold");
+        Check(Decisions.ShouldSuppressAtDistance(280f, 300f, 50f, true), "stays suppressed inside the band");
+        Check(!Decisions.ShouldSuppressAtDistance(240f, 300f, 50f, true), "restores below the band");
+        Check(Decisions.ShouldSuppressAtDistance(250f, 300f, 50f, true), "band edge stays suppressed");
+        Check(!Decisions.ShouldSuppressAtDistance(300f, 300f, 50f, false), "threshold itself does not suppress");
+
         Console.WriteLine(_failed == 0 ? "ALL PASS" : _failed + " FAILED");
         return _failed == 0 ? 0 : 1;
     }

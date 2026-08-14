@@ -16,26 +16,31 @@ namespace Highball
     /// </summary>
     internal sealed class SleepHeadroomProbe : IFeature
     {
+        private readonly IList<TrackedCar> _cars;
+
         private int _asleep;
         private int _stationary;
         private int _stationaryAwake;
         private int _tracked;
 
+        internal SleepHeadroomProbe(IList<TrackedCar> cars)
+        {
+            _cars = cars;
+        }
+
         public string Id { get { return "sleep_headroom"; } }
         public string DisplayName { get { return "Sleep headroom probe (read-only)"; } }
         public bool IsExperimental { get { return false; } }
         public bool Enabled { get { return Settings.Instance.EnableSleepHeadroomProbe; } }
+        public bool Active { get; set; }
 
-        /// <summary>Always observes. A read-only probe has no baseline arm to control for.</summary>
-        public bool Active { get { return true; } set { } }
-
-        internal void Observe(IList<TrackedCar> cars)
+        public void Tick(float deltaTime)
         {
             int asleep = 0, stationary = 0, stationaryAwake = 0, tracked = 0;
 
-            for (int i = 0; i < cars.Count; i++)
+            for (int i = 0; i < _cars.Count; i++)
             {
-                TrackedCar car = cars[i];
+                TrackedCar car = _cars[i];
                 if (car?.Rigidbody == null) continue;
 
                 tracked++;
@@ -51,11 +56,6 @@ namespace Highball
             _stationaryAwake = stationaryAwake;
             _tracked = tracked;
         }
-
-        /// <summary>Never claims. This feature mutates nothing.</summary>
-        public bool TryClaim(TrackedCar car) { return false; }
-
-        public void Release(TrackedCar car) { }
 
         public void ReleaseAll() { }
 

@@ -39,28 +39,59 @@ namespace Highball
                     continue;
                 }
 
-                string claimed = null;
+                bool claimed = false;
 
                 for (int f = 0; f < _features.Length; f++)
                 {
-                    IFeature feature = _features[f];
-
-                    if (claimed != null || !feature.Enabled || !feature.Active)
+                    ICarFeature feature = _features[f] as ICarFeature;
+                    if (feature == null)
                     {
-                        // Either someone already owns this car, or this feature is off.
-                        // Either way it must not be holding it.
+                        continue;
+                    }
+
+                    if (claimed || !feature.Enabled || !feature.Active)
+                    {
                         feature.Release(car);
                         continue;
                     }
 
                     if (feature.TryClaim(car))
                     {
-                        claimed = feature.Id;
+                        claimed = true;
                     }
                     else
                     {
                         feature.Release(car);
                     }
+                }
+            }
+        }
+
+        /// <summary>
+        /// Drives features that act on their own schedule. A feature that is disabled or
+        /// inactive is released here rather than merely skipped, so an A/B baseline window
+        /// or a runtime toggle-off restores immediately rather than waiting for a tick.
+        /// </summary>
+        internal void Tick(float deltaTime)
+        {
+            for (int i = 0; i < _features.Length; i++)
+            {
+                IFeature f = _features[i];
+
+                try
+                {
+                    if (f.Enabled && f.Active)
+                    {
+                        f.Tick(deltaTime);
+                    }
+                    else
+                    {
+                        f.ReleaseAll();
+                    }
+                }
+                catch (Exception ex)
+                {
+                    Main.Log("Feature '" + f.Id + "' threw from Tick/ReleaseAll: " + ex);
                 }
             }
         }
@@ -78,13 +109,19 @@ namespace Highball
         {
             for (int i = 0; i < _features.Length; i++)
             {
+                ICarFeature feature = _features[i] as ICarFeature;
+                if (feature == null)
+                {
+                    continue;
+                }
+
                 try
                 {
-                    _features[i].Release(car);
+                    feature.Release(car);
                 }
                 catch (Exception ex)
                 {
-                    Main.Log("Feature '" + _features[i].Id + "' threw from Release(): " + ex);
+                    Main.Log("Feature '" + feature.Id + "' threw from Release(): " + ex);
                 }
             }
         }

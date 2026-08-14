@@ -11,7 +11,7 @@ namespace Highball
     /// is not evidence of harm, but it is not evidence of benefit either, so this ships
     /// off until a run of four or more windows per arm says otherwise.
     /// </summary>
-    internal sealed class SolverLodFeature : IFeature
+    internal sealed class SolverLodFeature : ICarFeature
     {
         private readonly List<TrackedCar> _held = new List<TrackedCar>();
 
@@ -20,6 +20,9 @@ namespace Highball
         public bool IsExperimental { get { return true; } }
         public bool Enabled { get { return Settings.Instance.EnableSolverLod; } }
         public bool Active { get; set; }
+
+        /// <summary>Acts only through claim arbitration; nothing to do on a tick.</summary>
+        public void Tick(float deltaTime) { }
 
         public bool TryClaim(TrackedCar car)
         {

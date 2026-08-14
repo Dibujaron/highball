@@ -36,7 +36,7 @@ namespace Highball
 
             _registry = new CarRegistry();
             _evaluator = new Evaluator();
-            _probe = new SleepHeadroomProbe();
+            _probe = new SleepHeadroomProbe(_registry.Cars);
             _host = new FeatureHost(new IFeature[]
             {
                 // Priority order. Sleep, once it exists, goes ahead of solver LOD.
@@ -117,8 +117,8 @@ namespace Highball
                     float dt = _evalTimer;
                     _evalTimer = 0f;
                     _evaluator.Evaluate(_registry.Cars, dt);
-                    _probe.Observe(_registry.Cars);
                     _host.Apply(_registry.Cars);
+                    _host.Tick(dt);
                 }
 
                 if (Settings.Instance.RunExperiment)

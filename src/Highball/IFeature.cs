@@ -1,9 +1,10 @@
 namespace Highball
 {
     /// <summary>
-    /// One optimization, independently toggleable. Features are offered each car in a
-    /// fixed priority order and the first one to claim it acts on it, so two features can
-    /// never mutate the same rigidbody.
+    /// One optimization, independently toggleable. Car-shaped features are offered each
+    /// car in a fixed priority order and the first one to claim it acts on it, so two
+    /// features can never mutate the same rigidbody. Global-state features are driven by
+    /// Tick instead.
     /// </summary>
     internal interface IFeature
     {
@@ -23,16 +24,27 @@ namespace Highball
         /// </summary>
         bool Active { get; set; }
 
-        /// <summary>Returns true if this feature took the car and acted on it.</summary>
-        bool TryClaim(TrackedCar car);
+        /// <summary>
+        /// Called once per evaluation pass on features that are Enabled and Active.
+        /// Features that act on global state rather than individual cars do their work
+        /// here. Car-shaped features can leave it empty.
+        /// </summary>
+        void Tick(float deltaTime);
 
-        /// <summary>Hands one car back, unconditionally.</summary>
-        void Release(TrackedCar car);
-
-        /// <summary>Hands every car back, unconditionally.</summary>
+        /// <summary>Hands everything back, unconditionally.</summary>
         void ReleaseAll();
 
         string[] TelemetryHeaders { get; }
         string[] TelemetryValues { get; }
+    }
+
+    /// <summary>
+    /// A feature that acts on individual cars, and therefore participates in claim
+    /// arbitration. The first enabled, active ICarFeature to claim a car acts on it.
+    /// </summary>
+    internal interface ICarFeature : IFeature
+    {
+        bool TryClaim(TrackedCar car);
+        void Release(TrackedCar car);
     }
 }

@@ -48,5 +48,39 @@ namespace Highball
             if (share < 0.10f) return "none";
             return share <= 0.30f ? "marginal" : "real";
         }
+
+        /// <summary>
+        /// A feature may only ever reduce work. Railroader sets its own values and we do
+        /// not learn them until runtime, so a fixed configured value can easily be higher
+        /// than the game's — which would turn an optimization into a de-optimization,
+        /// silently, while the panel claimed the feature was on.
+        /// </summary>
+        internal static float ClampReduction(float configured, float original)
+        {
+            return configured < original ? configured : original;
+        }
+
+        internal static int ClampReductionInt(int configured, int original)
+        {
+            return configured < original ? configured : original;
+        }
+
+        /// <summary>
+        /// Edge-triggered distance test with a hysteresis band. Suppression begins past
+        /// the threshold and does not end until the object is well inside it. Without the
+        /// band, an object hovering at the boundary would flip state every pass, and for
+        /// the renderer feature that means thousands of component writes per second —
+        /// a performance mod making things worse.
+        /// </summary>
+        internal static bool ShouldSuppressAtDistance(
+            float distance, float threshold, float hysteresisMeters, bool currentlySuppressed)
+        {
+            if (currentlySuppressed)
+            {
+                return distance >= threshold - hysteresisMeters;
+            }
+
+            return distance > threshold;
+        }
     }
 }
