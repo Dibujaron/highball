@@ -142,27 +142,17 @@ namespace Highball
                         continue;
                     }
 
-                    // Seed the speed baseline at discovery time, mirroring the old
-                    // CarState.LastSpeed seed. Without this, a car already moving when
-                    // first discovered would read a huge speed delta on its first
-                    // evaluation pass (0 -> current speed instead of ~0), tripping the
-                    // steady-accel threshold and costing it one EvaluateIntervalSeconds
-                    // of eligibility for no reason.
-                    CarFacts initialFacts = default(CarFacts);
-                    initialFacts.Speed = rb.velocity.magnitude;
-
-                    // OriginalSolverIterations and IsDowngraded are left at their default
-                    // (0 / false) here deliberately. They are SolverLodFeature's own scratch
-                    // fields (see TrackedCar), and TryClaim re-captures the real original
-                    // solver-iteration count itself before its first downgrade — a capture
-                    // here would never be what gets restored, only a dead write that invites
-                    // the next reader to trust it.
+                    // Facts are left at their default and filled in by the Evaluator's next
+                    // pass. CarRendererFeature's scratch fields (see TrackedCar) are left
+                    // default too: it gathers renderers and captures their original shadow
+                    // modes itself, on its first suppression, so a capture here would never
+                    // be what gets restored — only a dead write inviting the next reader to
+                    // trust it.
                     var tracked = new TrackedCar
                     {
                         Id = car.id,
                         Car = car,
-                        Rigidbody = rb,
-                        Facts = initialFacts
+                        Rigidbody = rb
                     };
 
                     _cars.Add(tracked);

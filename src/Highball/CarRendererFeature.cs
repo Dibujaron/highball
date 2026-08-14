@@ -18,7 +18,7 @@ namespace Highball
     /// happen only on a threshold transition, with a hysteresis band. Walking 519 cars'
     /// worth of renderers every pass would cost more than it saves.
     ///
-    /// Mirrors SolverLodFeature's _held list rather than the "nothing held globally"
+    /// Holds its own list of suppressed cars rather than the "nothing held globally"
     /// design first sketched for this feature: FeatureHost.ReleaseAll(IList&lt;TrackedCar&gt;)
     /// — the path used on whole-mod disable (Main.OnToggle) and OnUnload — calls each
     /// feature's parameterless ReleaseAll() WITHOUT ever passing it the car list or going
@@ -27,7 +27,7 @@ namespace Highball
     /// never runs again after that path (the registry is cleared right after), and a car
     /// rediscovered later gets a brand-new TrackedCar with ShadowsSuppressed defaulting to
     /// false, so nothing would ever know the real Renderer components still need restoring.
-    /// Tracking held cars here closes that gap the same way SolverLodFeature already does.
+    /// Tracking held cars here closes that gap.
     /// </summary>
     internal sealed class CarRendererFeature : ICarFeature
     {
@@ -39,9 +39,7 @@ namespace Highball
 
         public string Id { get { return "car_renderer_lod"; } }
         public string DisplayName { get { return "Car renderer LOD"; } }
-        public bool IsExperimental { get { return true; } }
         public bool Enabled { get { return Settings.Instance.EnableCarRendererLod; } }
-        public bool Active { get; set; }
 
         public void Tick(float deltaTime)
         {
@@ -178,9 +176,8 @@ namespace Highball
         /// <summary>
         /// Unconditional restore, used on whole-mod disable (Main.OnToggle) and OnUnload,
         /// neither of which goes through Apply/Release(car) or passes us a car list. Walks
-        /// our own held list exactly as SolverLodFeature.ReleaseAll does, so a car that was
-        /// suppressed does not keep its shadows off forever just because the mod (rather
-        /// than only this feature) was switched off.
+        /// our own held list, so a car that was suppressed does not keep its shadows off
+        /// forever just because the mod (rather than only this feature) was switched off.
         /// </summary>
         public void ReleaseAll()
         {

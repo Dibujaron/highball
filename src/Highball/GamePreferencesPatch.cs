@@ -1,8 +1,6 @@
 using System;
 using HarmonyLib;
 using UI.Builder;
-using UnityEngine;
-using UnityEngine.UI;
 
 namespace Highball
 {
@@ -88,9 +86,17 @@ namespace Highball
         /// <summary>
         /// Contents of the Highball tab. Every control reads and writes the same
         /// Settings fields the UMM panel uses, and every edit calls Settings.OnChange()
-        /// so the existing release-on-disable and telemetry-window-reset logic runs
-        /// exactly as it does for a UMM-panel edit. Slider ranges are copied from each
-        /// field's [Draw] attribute in Settings.cs so the two UIs cannot disagree.
+        /// so the existing release-on-disable and telemetry logic runs exactly as it does
+        /// for a UMM-panel edit. Slider ranges are copied from each field's [Draw]
+        /// attribute in Settings.cs so the two UIs cannot disagree.
+        ///
+        /// Every control goes through AddField(label, control), never AddSlider/AddLabel
+        /// on their own. A bare AddSlider returns an unlabelled, full-width RectTransform:
+        /// it renders with no name at all and spans the whole panel including the gutter
+        /// the section title is drawn in, so the title and the slider overlap. AddField is
+        /// what pairs a control with its label and lays it out in the content column —
+        /// AddFieldToggle is simply the same wrapper with a toggle built in, which is why
+        /// the toggles looked right while the sliders did not.
         ///
         /// Wrapped in its own try/catch (in addition to BuildTabsPostfix's) so that a
         /// throw partway through — e.g. the third section failing after the first two
@@ -107,84 +113,122 @@ namespace Highball
                 panel.AddSection("Trees & ground detail", b =>
                 {
                     // Declared before the toggle so the toggle's own callback can capture
-                    // and gate them by closure; each is assigned below once AddSlider
-                    // builds it, and the toggle callback only ever runs later, after a
-                    // player interaction, by which point every one is assigned.
-                    RectTransform billboardDistance = null;
-                    RectTransform detailDistance = null;
-                    RectTransform maxFullLod = null;
-                    RectTransform crossFade = null;
+                    // and gate them by closure; each is assigned below once the field is
+                    // built, and the toggle callback only ever runs later, after a player
+                    // interaction, by which point every one is assigned.
+                    IConfigurableElement billboardDistance = null;
+                    IConfigurableElement detailDistance = null;
+                    IConfigurableElement maxFullLod = null;
+                    IConfigurableElement crossFade = null;
 
-                    Action<bool> setTreeSlidersInteractable = value =>
+                    Action<bool> gateTreeSliders = enabled =>
                     {
-                        SetInteractable(billboardDistance, value);
-                        SetInteractable(detailDistance, value);
-                        SetInteractable(maxFullLod, value);
-                        SetInteractable(crossFade, value);
+                        Disable(billboardDistance, !enabled);
+                        Disable(detailDistance, !enabled);
+                        Disable(maxFullLod, !enabled);
+                        Disable(crossFade, !enabled);
                     };
 
                     b.AddFieldToggle("Enable  [experimental]", () => s.EnableTerrainLod,
-                        v => { s.EnableTerrainLod = v; s.OnChange(); setTreeSlidersInteractable(v); }, true);
+                        v => { s.EnableTerrainLod = v; s.OnChange(); gateTreeSliders(v); }, true)
+                     .Tooltip("Tree & ground detail LOD",
+                        "Draws distant trees as flat billboards and shortens ground-detail draw "
+                        + "distance. Never changes density — the forest stays as thick as you set it.");
 
-                    billboardDistance = b.AddSlider(() => s.TreeBillboardDistanceMeters,
-                        () => s.TreeBillboardDistanceMeters.ToString("F0") + " m",
-                        v => { s.TreeBillboardDistanceMeters = v; s.OnChange(); },
-                        10f, 250f, false, v => { });
+                    billboardDistance = b.AddField("Tree billboard distance",
+                        b.AddSlider(() => s.TreeBillboardDistanceMeters,
+                            () => s.TreeBillboardDistanceMeters.ToString("F0") + " m",
+                            v => { s.TreeBillboardDistanceMeters = v; s.OnChange(); },
+                            10f, 250f, false, v => { }))
+                     .Tooltip("Tree billboard distance",
+                        "Past this distance a tree is drawn as a batched billboard instead of a 3D mesh.");
 
-                    detailDistance = b.AddSlider(() => s.DetailObjectDistanceMeters,
-                        () => s.DetailObjectDistanceMeters.ToString("F0") + " m",
-                        v => { s.DetailObjectDistanceMeters = v; s.OnChange(); },
-                        10f, 250f, false, v => { });
+                    detailDistance = b.AddField("Ground detail distance",
+                        b.AddSlider(() => s.DetailObjectDistanceMeters,
+                            () => s.DetailObjectDistanceMeters.ToString("F0") + " m",
+                            v => { s.DetailObjectDistanceMeters = v; s.OnChange(); },
+                            10f, 250f, false, v => { }))
+                     .Tooltip("Ground detail distance",
+                        "Draw distance for grass and ground detail. Density is never changed.");
 
-                    maxFullLod = b.AddSlider(() => s.TreeMaxFullLodCount,
-                        () => s.TreeMaxFullLodCount.ToString(),
-                        v => { s.TreeMaxFullLodCount = (int)v; s.OnChange(); },
-                        0f, 250f, true, v => { });
+                    maxFullLod = b.AddField("Max full-detail trees",
+                        b.AddSlider(() => s.TreeMaxFullLodCount,
+                            () => s.TreeMaxFullLodCount.ToString(),
+                            v => { s.TreeMaxFullLodCount = (int)v; s.OnChange(); },
+                            0f, 250f, true, v => { }))
+                     .Tooltip("Max full-detail trees",
+                        "How many trees may render as 3D meshes at once. Everything beyond this "
+                        + "count is billboarded regardless of distance.");
 
-                    crossFade = b.AddSlider(() => s.TreeCrossFadeLengthMeters,
-                        () => s.TreeCrossFadeLengthMeters.ToString("F0") + " m",
-                        v => { s.TreeCrossFadeLengthMeters = v; s.OnChange(); },
-                        0f, 100f, false, v => { });
+                    crossFade = b.AddField("Crossfade length",
+                        b.AddSlider(() => s.TreeCrossFadeLengthMeters,
+                            () => s.TreeCrossFadeLengthMeters.ToString("F0") + " m",
+                            v => { s.TreeCrossFadeLengthMeters = v; s.OnChange(); },
+                            0f, 100f, false, v => { }))
+                     .Tooltip("Crossfade length", "Softens the pop as a tree switches to a billboard.");
 
                     // Match Settings.cs's VisibleOn = "EnableTerrainLod|true": these sliders
                     // do nothing while the feature is off, so the in-game tab should say so
                     // too rather than leaving them live.
-                    setTreeSlidersInteractable(s.EnableTerrainLod);
+                    gateTreeSliders(s.EnableTerrainLod);
                 }, 8f);
+
+                // AddSection's third argument is the spacing BETWEEN ROWS INSIDE the
+                // section, not before its title, so a section title is otherwise laid out
+                // flush against the previous section's last row. Both are drawn in the same
+                // narrow left gutter — the title left-aligned, field labels right-aligned —
+                // so flush means the title visibly collides with the label above it
+                // ("ROLLING STOCK" into "CROSSFADE LENGTH"). An explicit spacer between
+                // sections is what gives each title its own band.
+                panel.Spacer(16f);
 
                 panel.AddSection("Rolling stock", b =>
                 {
-                    RectTransform shadowDistance = null;
-
-                    Action<bool> setCarSlidersInteractable = value => SetInteractable(shadowDistance, value);
+                    IConfigurableElement shadowDistance = null;
 
                     b.AddFieldToggle("Car renderer LOD  [experimental]", () => s.EnableCarRendererLod,
-                        v => { s.EnableCarRendererLod = v; s.OnChange(); setCarSlidersInteractable(v); }, true);
+                        v => { s.EnableCarRendererLod = v; s.OnChange(); Disable(shadowDistance, !v); }, true)
+                     .Tooltip("Car renderer LOD",
+                        "Stops distant rolling stock from casting shadows. Cars never disappear "
+                        + "or change shape.");
 
-                    shadowDistance = b.AddSlider(() => s.CarShadowDistanceMeters,
-                        () => s.CarShadowDistanceMeters.ToString("F0") + " m",
-                        v => { s.CarShadowDistanceMeters = v; s.OnChange(); },
-                        50f, 2000f, false, v => { });
+                    shadowDistance = b.AddField("Shadow distance",
+                        b.AddSlider(() => s.CarShadowDistanceMeters,
+                            () => s.CarShadowDistanceMeters.ToString("F0") + " m",
+                            v => { s.CarShadowDistanceMeters = v; s.OnChange(); },
+                            50f, 2000f, false, v => { }))
+                     .Tooltip("Shadow distance",
+                        "Past this distance a car stops casting shadows. Its own shadow is a few "
+                        + "pixels there.");
 
                     // Match Settings.cs's VisibleOn = "EnableCarRendererLod|true".
-                    setCarSlidersInteractable(s.EnableCarRendererLod);
-
-                    b.AddFieldToggle("Solver iteration LOD (no measured benefit)",
-                        () => s.EnableSolverLod,
-                        v => { s.EnableSolverLod = v; s.OnChange(); }, true);
+                    Disable(shadowDistance, !s.EnableCarRendererLod);
                 }, 8f);
 
-                panel.AddSection("Diagnostics", b =>
+                panel.Spacer(16f);
+
+                panel.AddSection("Telemetry", b =>
                 {
-                    b.AddFieldToggle("Sleep headroom probe (read-only)",
-                        () => s.EnableSleepHeadroomProbe,
-                        v => { s.EnableSleepHeadroomProbe = v; s.OnChange(); }, true);
+                    IConfigurableElement interval = null;
 
-                    b.AddFieldToggle("Run A/B experiment", () => s.RunExperiment,
-                        v => { s.RunExperiment = v; s.OnChange(); }, true);
+                    b.AddFieldToggle("Record to CSV", () => s.EnableTelemetry,
+                        v => { s.EnableTelemetry = v; s.OnChange(); Disable(interval, !v); }, true)
+                     .Tooltip("Record telemetry to CSV",
+                        "Writes frame timings and per-feature counters to a CSV in the game's "
+                        + "persistent data folder. Off unless you are measuring something.");
 
-                    b.AddLabel(() => "Telemetry: " + Main.TelemetryModeLabel()
-                                      + "   rows: " + Main.TelemetryRowsWritten(),
+                    interval = b.AddField("Row interval",
+                        b.AddSlider(() => s.TelemetryIntervalSeconds,
+                            () => s.TelemetryIntervalSeconds.ToString("F0") + " s",
+                            v => { s.TelemetryIntervalSeconds = v; s.OnChange(); },
+                            10f, 120f, true, v => { }))
+                     .Tooltip("Row interval",
+                        "How often a row is written. Each row averages the frames since the previous one.");
+
+                    Disable(interval, !s.EnableTelemetry);
+
+                    b.AddField("Status",
+                        () => Main.TelemetryStatus() + "   rows: " + Main.TelemetryRowsWritten(),
                         UIPanelBuilder.Frequency.Periodic);
                 }, 8f);
             }
@@ -195,27 +239,14 @@ namespace Highball
         }
 
         /// <summary>
-        /// Mirrors, for the in-game tab, the interactability Settings.cs's VisibleOn already
-        /// gives the UMM panel: a slider whose parent feature is off should not look live.
-        /// AddFieldToggle exposes an `interactable` parameter directly, but AddSlider does
-        /// not, so the slider's own Selectable component — found in its child hierarchy,
-        /// since AddSlider returns the control's outer RectTransform, not the Selectable
-        /// itself — is toggled instead. Null-safe throughout: a control that failed to
-        /// build, or whose hierarchy does not contain a Selectable, is left alone rather
-        /// than throwing.
+        /// Mirrors, for the in-game tab, what Settings.cs's VisibleOn already gives the UMM
+        /// panel: a control whose parent feature is off should not look live. Null-safe,
+        /// since a control that failed to build should be skipped rather than throw and
+        /// take the rest of the section with it.
         /// </summary>
-        private static void SetInteractable(RectTransform control, bool interactable)
+        private static void Disable(IConfigurableElement element, bool disabled)
         {
-            if (control == null)
-            {
-                return;
-            }
-
-            Selectable selectable = control.GetComponentInChildren<Selectable>(true);
-            if (selectable != null)
-            {
-                selectable.interactable = interactable;
-            }
+            element?.Disable(disabled);
         }
     }
 }

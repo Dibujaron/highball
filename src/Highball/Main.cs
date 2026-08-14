@@ -12,11 +12,8 @@ namespace Highball
     /// rolling stock, computes per-car facts once per pass, and arbitrates which feature
     /// may act on which car.
     ///
-    /// Telemetry is recorded every session regardless of settings. The optional A/B
-    /// harness that alternates a single feature between baseline and active windows is
-    /// off by default — the hypotheses tried on this problem so far were wrong when
-    /// measured, so ordinary play now just records LIVE numbers; A/B remains available
-    /// for whenever the next hypothesis needs the same evidence.
+    /// CSV telemetry is available but off by default: recording is a measurement activity,
+    /// and ordinary play should write nothing.
     /// </summary>
     public static class Main
     {
@@ -27,7 +24,6 @@ namespace Highball
         private static Evaluator _evaluator;
         private static FeatureHost _host;
         private static Telemetry _telemetry;
-        private static SleepHeadroomProbe _probe;
         private static Harmony _harmony;
 
         private static float _refreshTimer;
@@ -40,24 +36,17 @@ namespace Highball
 
             _registry = new CarRegistry();
             _evaluator = new Evaluator();
-            _probe = new SleepHeadroomProbe(_registry.Cars);
             _host = new FeatureHost(new IFeature[]
             {
                 // Priority order == claim order: FeatureHost.Apply offers each car to
-                // ICarFeatures in this array's order, and the first enabled+active one to
-                // claim it wins, so an earlier feature with a shorter distance threshold
-                // will starve a later one of cars it would otherwise have claimed (see
-                // Telemetry.WarnIfStarvedByPriority). Sleep, once it exists, goes ahead of
-                // solver LOD.
+                // ICarFeatures in this array's order, and the first enabled one to claim it
+                // wins, so a second car-acting feature added here would only ever see the
+                // cars this one declined.
                 new CarRendererFeature(),
-                new SolverLodFeature(),
                 // Acts on terrains, not cars, so it never claims and its position here
                 // doesn't affect arbitration. Kept after the car-acting features so
                 // priority order stays readable.
-                new TerrainLodFeature(),
-                // Read-only; never claims, so its position here doesn't affect
-                // arbitration. Kept last so mutating features stay first and readable.
-                _probe
+                new TerrainLodFeature()
             });
 
             // A car reaped by discovery may still be claimed by a feature; hand it back
@@ -97,16 +86,6 @@ namespace Highball
 
             if (value)
             {
-                if (Settings.Instance.RunExperiment)
-                {
-                    // Start on baseline so the first recorded window is a control.
-                    _telemetry.ForceActive(false);
-                }
-                else
-                {
-                    _telemetry.ForceActive(true);
-                }
-
                 Log("Enabled.");
             }
             else
@@ -143,13 +122,12 @@ namespace Highball
                 {
                     float dt = _evalTimer;
                     _evalTimer = 0f;
-                    _evaluator.Evaluate(_registry.Cars, dt);
+                    _evaluator.Evaluate(_registry.Cars);
                     _host.Apply(_registry.Cars);
                     _host.Tick(dt);
                 }
 
-                // Telemetry is recorded every session; RunExperiment only controls whether
-                // Telemetry additionally alternates one feature between windows.
+                // No-op unless recording is switched on; see Telemetry.Tick.
                 _telemetry.Tick(deltaTime);
             }
             catch (Exception ex)
@@ -166,25 +144,9 @@ namespace Highball
             GUILayout.Label("Highball");
             GUILayout.Label($"Tracked: {_registry.TrackedCount}   Moving: {_evaluator.MovingCount}");
 
-            // Telemetry is recorded every session, so this readout is unconditional —
-            // otherwise the panel would give no evidence telemetry is even running while
-            // RunExperiment (off by default) is false. The target is only meaningful while
-            // an A/B run is alternating it.
-            if (Settings.Instance.RunExperiment)
-            {
-                GUILayout.Label(string.Format("Telemetry: {0}   target: {1}   rows: {2}",
-                    _telemetry.ModeLabel(),
-                    Settings.Instance.ExperimentTarget,
-                    _telemetry.RowsWritten));
-            }
-            else
-            {
-                GUILayout.Label(string.Format("Telemetry: {0}   rows: {1}",
-                    _telemetry.ModeLabel(),
-                    _telemetry.RowsWritten));
-            }
-
-            _probe.DrawStatus();
+            GUILayout.Label(string.Format("Telemetry: {0}   rows: {1}",
+                _telemetry.StatusLabel(),
+                _telemetry.RowsWritten));
 
             GUILayout.Space(8f);
             UnityModManager.UI.DrawFields(ref Settings.Instance, modEntry,
@@ -231,15 +193,15 @@ namespace Highball
         }
 
         /// <summary>
-        /// Small internal accessors so GamePreferencesPatch's live Diagnostics label can
-        /// show the same mode/rows readout Main.OnGUI already shows, without making
-        /// _telemetry (or Telemetry's internals) public. Guarded against _telemetry being
-        /// null: the in-game tab can in principle be rendered before Load finishes
-        /// constructing it, or after OnUnload has torn it down.
+        /// Small internal accessors so the in-game tab's live label can show the same
+        /// status/rows readout Main.OnGUI already shows, without making _telemetry (or
+        /// Telemetry's internals) public. Guarded against _telemetry being null: the
+        /// in-game tab can in principle be rendered before Load finishes constructing it,
+        /// or after OnUnload has torn it down.
         /// </summary>
-        internal static string TelemetryModeLabel()
+        internal static string TelemetryStatus()
         {
-            return _telemetry != null ? _telemetry.ModeLabel() : "n/a";
+            return _telemetry != null ? _telemetry.StatusLabel() : "n/a";
         }
 
         internal static int TelemetryRowsWritten()
@@ -282,11 +244,11 @@ namespace Highball
 
         /// <summary>
         /// Also called from Settings.OnChange, alongside ReleaseDisabledFeatures. Tells
-        /// Telemetry to discard whatever window is in flight and re-apply the current mode,
-        /// so a settings edit mid-window never flushes a row mixing two configurations and
-        /// RunExperiment being switched off never leaves the experiment target pinned
-        /// inactive forever. Guarded against _telemetry being null for the same reason as
-        /// ReleaseDisabledFeatures: OnChange can fire before Load finishes constructing it.
+        /// Telemetry to start or stop recording if that toggle is what changed, and to
+        /// discard whatever window is in flight either way, so a settings edit mid-window
+        /// never flushes a row mixing two configurations. Guarded against _telemetry being
+        /// null for the same reason as ReleaseDisabledFeatures: OnChange can fire before
+        /// Load has finished constructing it.
         /// </summary>
         internal static void TelemetrySettingsChanged()
         {

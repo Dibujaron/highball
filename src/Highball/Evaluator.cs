@@ -8,9 +8,17 @@ namespace Highball
     /// </summary>
     internal sealed class Evaluator
     {
+        /// <summary>
+        /// Speed (m/s) above which a car counts as moving. Reporting only — it decides the
+        /// `moving` telemetry column, which exists so two telemetry windows can be checked
+        /// for comparable workload. No feature acts on it, so it is a constant rather than
+        /// another slider in the panel.
+        /// </summary>
+        private const float MovingSpeedThreshold = 0.1f;
+
         internal int MovingCount { get; private set; }
 
-        internal void Evaluate(System.Collections.Generic.IList<TrackedCar> cars, float deltaTime)
+        internal void Evaluate(System.Collections.Generic.IList<TrackedCar> cars)
         {
             Camera cam = Camera.main;
             if (cam == null)
@@ -19,7 +27,6 @@ namespace Highball
             }
 
             Vector3 eye = cam.transform.position;
-            Settings s = Settings.Instance;
             int moving = 0;
 
             for (int i = 0; i < cars.Count; i++)
@@ -32,9 +39,8 @@ namespace Highball
 
                 Rigidbody rb = car.Rigidbody;
                 float speed = rb.velocity.magnitude;
-                float accel = Mathf.Abs(speed - car.Facts.Speed) / Mathf.Max(deltaTime, 0.0001f);
 
-                if (speed > s.MovingSpeedThreshold)
+                if (speed > MovingSpeedThreshold)
                 {
                     moving++;
                 }
@@ -42,12 +48,6 @@ namespace Highball
                 CarFacts facts;
                 facts.Distance = Vector3.Distance(rb.position, eye);
                 facts.Speed = speed;
-                facts.Acceleration = accel;
-                facts.SteadySeconds = Decisions.AccumulateCalm(
-                    car.Facts.SteadySeconds, accel, s.SteadyAccelThreshold, deltaTime);
-                facts.StationarySeconds = Decisions.AccumulateCalm(
-                    car.Facts.StationarySeconds, speed, s.MovingSpeedThreshold, deltaTime);
-                facts.IsAsleep = rb.IsSleeping();
 
                 car.Facts = facts;
             }

@@ -1,6 +1,7 @@
-# Project state — 2026-08-11
+# Project state — 2026-08-14
 
-Resume point for the Railroader performance investigation. Written at end of session 1.
+Resume point for the Railroader performance investigation. Started at the end of session 1
+and updated each session since.
 
 ## The problem
 
@@ -73,17 +74,20 @@ zero-tracked result is visible rather than silent.
 
 ## Current work: `src/Highball`
 
-Reduces PhysX `solverIterations` (6 → 2) on cars that are >500 m from camera **and** have
-been under 0.5 m/s² for 3 continuous seconds. Distant, steadily-moving rolling stock is
-otherwise never reduced in fidelity, and Discord consensus is that moving stock is the
-dominant cost.
+Two rendering-CPU features, both experimental and both shipping off: **car renderer LOD**
+(stops distant rolling stock casting shadows) and **tree & ground detail LOD** (billboards
+distant trees, shortens ground-detail draw distance, never touches density). Neither has
+been measured in-game yet.
 
-Safety model is restore-biased: downgrades require sustained calm, restores are immediate
-and unconditional, and everything is handed back on toggle-off and unload. Solver settings
-are runtime-only and never persist to the save.
+Safety model is restore-biased: restores are immediate and unconditional, and everything
+is handed back on toggle-off and unload. Every change is runtime-only and never persists
+to the save.
 
-Ships with an A/B harness that alternates BASELINE/ACTIVE every 30 s, discarding 2 s after
-each switch, logging to `%LOCALLOW%\Giraffe Lab LLC\Railroader\Highball-<timestamp>.csv`.
+Telemetry is a plain CSV, **off by default**, logging to
+`%LOCALLOW%\Giraffe Lab LLC\Railroader\Highball-<timestamp>.csv`. The alternating
+BASELINE/ACTIVE A/B harness that produced the session-3 result below was removed on
+2026-08-14, once all three hypotheses it existed to test had been answered — comparing a
+feature against itself is now two recordings, one with the toggle off and one with it on.
 
 ### Results — DEAD, measured 2026-08-13
 
@@ -100,7 +104,8 @@ Session 3 (2026-08-13 20:44–20:50) is the proper run: 5 windows per arm, 30 s 
 
 The mechanism is definitely working: 413–479 cars downgraded in every ACTIVE window and 0
 in every BASELINE window. It simply buys nothing. Solver-iteration LOD on rolling stock is
-dead.
+dead. `SolverLodFeature` was deleted on 2026-08-14; it lives in the git history if the
+question ever reopens.
 
 (Earlier sessions, kept for context: session 1 was invalid — `tracked=0`, the discovery
 bug — but established a **±9 fps noise floor** with the mod provably inert. Session 2 had
@@ -122,8 +127,8 @@ Against the pre-agreed rule (<10% → "PhysX already handles it, do not build"),
 
 The prior argument for building it was that bodies in constant contact with track colliders
 and bound by bogie/coupler joints often fail to auto-sleep. On this save they sleep fine.
-`StationarySleepFeature` will not be built. `SleepMinDistanceMeters` and
-`RequiredStationarySeconds` are now dead settings and should be removed.
+`StationarySleepFeature` will not be built. The probe itself was deleted on 2026-08-14 —
+its question is answered and re-asking it is a `git show` away.
 
 ### Discovery — confirmed working
 
@@ -229,32 +234,34 @@ the game.
 
 ## Cleanups owed
 
-All three cleanups noted at the end of session 1 are done:
+Session-1 and session-2 cleanups are all done. The 2026-08-14 pass then removed the
+measurement scaffolding wholesale, now that every hypothesis it was built for has been
+answered:
 
-- `SleepMinDistanceMeters` and `RequiredStationarySeconds` are gone; `Settings.cs` has no
-  trace of either, and `StationarySleepFeature` was never built.
-- The doubled `[Highball] [Highball]` log prefix is gone — `Main.Log` logs the message
-  alone, since UMM's own logger already adds the mod's display-name prefix.
-- `ExperimentTarget` staying a free-text `[Draw(Type = DrawType.Field)]` rather than a
-  dropdown is deliberate, not outstanding: UMM's `PopupList` draw type hard-checks
-  `FieldType.IsEnum` and throws for a string field, so a dropdown is not achievable without
-  changing the setting's underlying type (which would break existing saved settings files).
-  The field's tooltip lists the four valid ids (`car_renderer_lod`, `solver_lod`,
-  `terrain_lod`, `sleep_headroom`) instead.
+- `SolverLodFeature` and `SleepHeadroomProbe` deleted, along with their settings
+  (`EnableSolverLod`, `LowSolverIterations`, `EnableSleepHeadroomProbe`) and the
+  eligibility sliders only they consumed (`MinDistanceMeters`, `SteadyAccelThreshold`,
+  `RequiredSteadySeconds`, `MovingSpeedThreshold`).
+- The A/B harness is gone: `RunExperiment`, `ExperimentTarget`, the BASELINE/ACTIVE
+  alternation, the settle timer, target validation, and the claim-starvation warning.
+  `Telemetry.cs` went from 756 lines to ~330, and the CSV lost its `mode` column.
+- `IFeature.Active` and `IFeature.IsExperimental` are gone — `Active` existed only so the
+  A/B harness could pin a feature inactive, and nothing ever read `IsExperimental`.
+- `CarFacts` is down to `Distance` and `Speed`; the calm clocks, acceleration and sleep
+  flag had no readers left. The `moving` telemetry column survives with its threshold as a
+  constant in `Evaluator` rather than a slider, since no feature acts on it.
+- Telemetry is now **off by default** (`EnableTelemetry`), and `ExperimentWindowSeconds`
+  became `TelemetryIntervalSeconds`.
 
-Also resolved since session 1, though not originally listed here: settings being reachable
-only from the main menu is no longer the whole story — `GamePreferencesPatch.cs` adds a
-Highball tab to Railroader's own in-game preferences window, so most settings can now be
-tuned mid-session without a trip out.
+Also fixed in the same pass: every control in the in-game tab is now built through
+`UIPanelBuilder.AddField(label, control)`. A bare `AddSlider` returns an unlabelled,
+full-width element — which is why that tab's five sliders rendered with no labels at all
+and overlapped the gutter their section titles are drawn in. Slider gating also moved from
+poking at the child `Selectable` to the API's own `IConfigurableElement.Disable(bool)`, and
+each row now carries a `.Tooltip(...)`.
 
 Outstanding:
 
-- The in-game tab is not a full mirror of the UMM panel: it does not expose
-  `LowSolverIterations` or either cadence setting (`RefreshIntervalSeconds`,
-  `EvaluateIntervalSeconds`), so tuning those still requires the UMM panel (and, for
-  `RefreshIntervalSeconds`/`EvaluateIntervalSeconds`, a trip to the main menu, per the
-  original bullet above).
-- The in-game tab's label for solver iteration LOD reads "(no measured benefit)" instead
-  of the UMM panel's `[experimental]` — deliberate, since that feature has since been
-  measured and killed (see Results above), but the two panels' labels for that one
-  feature no longer match and a reader comparing them side-by-side should know why.
+- The in-game tab still does not expose either cadence setting
+  (`RefreshIntervalSeconds`, `EvaluateIntervalSeconds`), so tuning those requires the UMM
+  panel and therefore a trip to the main menu.

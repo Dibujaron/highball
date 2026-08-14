@@ -7,17 +7,10 @@ namespace Highball
     /// </summary>
     internal struct CarFacts
     {
+        /// <summary>Metres from the main camera. The only fact any feature acts on today.</summary>
         internal float Distance;
+
+        /// <summary>Speed in m/s. Reported, not acted on: it drives the `moving` telemetry column.</summary>
         internal float Speed;
-        internal float Acceleration;
-
-        /// <summary>Continuous seconds under the acceleration threshold.</summary>
-        internal float SteadySeconds;
-
-        /// <summary>Continuous seconds under the speed threshold. Not the same as steady:
-        /// a consist at constant speed is steady but emphatically not stationary.</summary>
-        internal float StationarySeconds;
-
-        internal bool IsAsleep;
     }
 }

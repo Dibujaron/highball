@@ -4,9 +4,9 @@ using System.Collections.Generic;
 namespace Highball
 {
     /// <summary>
-    /// Offers each car to features in priority order. Sleeping dominates solver LOD —
-    /// a sleeping body is skipped by the solver entirely, so lowering its iteration count
-    /// would be meaningless — hence sleep sits earlier in the array.
+    /// Offers each car to features in priority order. The first enabled ICarFeature to
+    /// claim a car acts on it and every later feature is asked to release it, so two
+    /// features can never mutate the same car in the same pass.
     /// </summary>
     internal sealed class FeatureHost
     {
@@ -63,7 +63,7 @@ namespace Highball
                     // later car unprocessed for the rest of that Apply() call.
                     try
                     {
-                        if (claimed || !feature.Enabled || !feature.Active)
+                        if (claimed || !feature.Enabled)
                         {
                             feature.Release(car);
                             continue;
@@ -96,9 +96,9 @@ namespace Highball
         }
 
         /// <summary>
-        /// Drives features that act on their own schedule. A feature that is disabled or
-        /// inactive is released here rather than merely skipped, so an A/B baseline window
-        /// or a runtime toggle-off restores immediately rather than waiting for a tick.
+        /// Drives features that act on their own schedule. A disabled feature is released
+        /// here rather than merely skipped, so a runtime toggle-off restores immediately
+        /// rather than waiting for a tick.
         /// </summary>
         internal void Tick(float deltaTime)
         {
@@ -108,7 +108,7 @@ namespace Highball
 
                 try
                 {
-                    if (f.Enabled && f.Active)
+                    if (f.Enabled)
                     {
                         f.Tick(deltaTime);
                     }

@@ -46,9 +46,7 @@ namespace Highball
 
         public string Id { get { return "terrain_lod"; } }
         public string DisplayName { get { return "Tree & ground detail LOD"; } }
-        public bool IsExperimental { get { return true; } }
         public bool Enabled { get { return Settings.Instance.EnableTerrainLod; } }
-        public bool Active { get; set; }
 
         public void Tick(float deltaTime)
         {

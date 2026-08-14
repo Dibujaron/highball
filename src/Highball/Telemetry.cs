@@ -7,46 +7,26 @@ using UnityEngine;
 namespace Highball
 {
     /// <summary>
-    /// Records frame timings every session, regardless of settings, so results can be
-    /// read back later. By default every row is stamped LIVE: each feature simply holds
-    /// whatever its own toggle says, with nothing alternated.
-    ///
-    /// When <see cref="Settings.RunExperiment"/> is turned on, it additionally alternates
-    /// the single feature named by <see cref="Settings.ExperimentTarget"/> between
-    /// baseline and active windows, stamping each ACTIVE/BASELINE, so that one feature's
-    /// effect can be measured without the player running a protocol. Alternating rather
-    /// than running one long A then one long B matters there: it controls for whatever
-    /// the player happens to be doing, which drifts over a session. Every other feature
-    /// still holds whatever its own toggle says, so an fps delta can always be attributed
-    /// to the one feature under test rather than to all of them at once.
+    /// Optionally records frame timings to a CSV, so a feature's effect can be read back
+    /// later instead of guessed at from the fps counter. Off by default
+    /// (<see cref="Settings.EnableTelemetry"/>): recording is a measurement activity, and
+    /// normal play should write nothing.
     ///
     /// The CSV columns are composed from whichever features are enabled: base columns
     /// first, then each enabled feature's own TelemetryHeaders/TelemetryValues, walked in
     /// the same FeatureHost.Features order so columns never silently misalign.
     ///
-    /// Each session writes to its own uniquely-named file with exactly one banner and
-    /// header, readable as plain CSV; a mid-session Enabled drift rolls over to a new file.
+    /// Each recording session writes to its own uniquely-named file with exactly one banner
+    /// and header, readable as plain CSV; a mid-session settings drift rolls over to a new
+    /// file rather than reinterpreting later rows under a stale banner.
     /// </summary>
     internal sealed class Telemetry
     {
-        /// <summary>
-        /// Frames discarded after each mode switch. Solver iteration changes settle within
-        /// a few physics steps, and including that transient would smear the comparison.
-        /// </summary>
-        private const float SettleSeconds = 2f;
-
         private readonly FeatureHost _host;
         private readonly CarRegistry _registry;
         private readonly Evaluator _evaluator;
 
-        private bool _activeWindow;
         private float _windowElapsed;
-        private float _settleRemaining;
-
-        // Tracks RunExperiment as of the last time we looked, purely to let
-        // SettingsChanged() detect a false-to-true edge (see its comment).
-        private bool _lastRunExperiment;
-
         private int _frames;
         private float _frameSeconds;
 
@@ -57,18 +37,22 @@ namespace Highball
         private int _rolloverCount;
 
         /// <summary>
-        /// The drift key (joined Ids of the enabled feature set, plus ExperimentTarget) that
-        /// the currently-open file's banner and header describe. FlushWindow compares against
-        /// this every row so a mid-session Enabled toggle OR a mid-session ExperimentTarget
-        /// edit rolls over to a new file instead of silently reinterpreting columns, or rows,
-        /// under a stale banner. A target edit alone does not change any column, but it does
-        /// change what ACTIVE/BASELINE mean for every row written after it, so it must roll
-        /// over just as surely as a column change would.
+        /// Tracks EnableTelemetry as of the last time we looked, so SettingsChanged() can
+        /// tell an off->on edge (start a new recording) from an on->off edge (close the
+        /// current one) from an ordinary edit to some unrelated slider. UMM does not tell
+        /// us which field changed, so the edge has to be detected rather than observed.
+        /// </summary>
+        private bool _lastEnabled;
+
+        /// <summary>
+        /// The drift key (joined Ids of the enabled feature set, plus every tunable on the
+        /// SETTINGS line) that the currently-open file's banner and header describe.
+        /// FlushWindow compares against this every row so a mid-session change rolls over to
+        /// a new file instead of silently reinterpreting rows under a stale banner.
         /// </summary>
         private string _headerDriftKey;
 
         internal string CsvPath { get; private set; }
-        internal bool ActiveWindow => _activeWindow;
         internal int RowsWritten => _rowsWritten;
 
         internal Telemetry(FeatureHost host, CarRegistry registry, Evaluator evaluator)
@@ -80,243 +64,29 @@ namespace Highball
 
         internal void Init()
         {
-            // Millisecond resolution: two Init() calls in the same wall-clock second would
-            // otherwise produce the same stem, and with append: false the second would
-            // silently wipe the first session's file instead of harmlessly appending to it.
+            _lastEnabled = Settings.Instance.EnableTelemetry;
+
+            if (_lastEnabled)
+            {
+                StartRecording();
+            }
+        }
+
+        /// <summary>
+        /// Opens a fresh file and starts a fresh window. Called at Init when telemetry is
+        /// already on, and from SettingsChanged on an off->on edge — toggling recording off
+        /// and on again is a new measurement, not a continuation, so it gets its own file
+        /// rather than appending rows under the old banner.
+        /// </summary>
+        private void StartRecording()
+        {
+            // Millisecond resolution: two StartRecording() calls in the same wall-clock
+            // second would otherwise produce the same stem, and with append: false the
+            // second would silently wipe the first file instead of harmlessly appending.
             _fileStem = "Highball-" + DateTime.Now.ToString("yyyyMMdd-HHmmssfff", CultureInfo.InvariantCulture);
+            _rolloverCount = 0;
             OpenNewFile();
-
-            // Seed the edge-detector with whatever RunExperiment loaded as, so the first
-            // settings-panel edit that turns it on from here is correctly seen as a
-            // false-to-true edge rather than a false positive from an unset default.
-            _lastRunExperiment = Settings.Instance.RunExperiment;
-
-            // ResolveTarget() is not file I/O, but it is structurally throwable (it walks
-            // an arbitrary IFeature's Id/DisplayName/Active accessors), and Main.Load has no
-            // try/catch of its own around Telemetry.Init() — an uncaught throw here would
-            // fail the entire mod load, not just degrade telemetry. Guard it the same way.
-            try
-            {
-                ResolveTarget();
-            }
-            catch (Exception ex)
-            {
-                Main.Log("Telemetry: ResolveTarget failed: " + ex.Message);
-            }
-        }
-
-        /// <summary>
-        /// Validates Settings.ExperimentTarget once at startup and logs loudly if it cannot
-        /// possibly produce two distinguishable arms. This does not correct anything or
-        /// change ApplyMode's behaviour — ApplyMode still resolves the target by Id on every
-        /// call, since a feature's Enabled state can change at runtime. The point is to make
-        /// a silently-null experiment visible in the log instead of invisible in the CSV.
-        /// </summary>
-        private void ResolveTarget()
-        {
-            // The three validity checks (null-match, not-Enabled, inert-setter) only
-            // matter for the A/B harness itself — they exist to catch a target that
-            // cannot possibly produce two distinguishable arms. If RunExperiment is off
-            // there is no A/B in flight for a bad target to invalidate, so skip them at
-            // launch; otherwise the shipped defaults (ExperimentTarget=solver_lod,
-            // EnableSolverLod=false) would log the "is not Enabled" warning on every
-            // single launch, which is noise in the one channel the owner has while away.
-            // They are NOT skipped forever, though — SettingsChanged() re-runs them the
-            // moment RunExperiment flips false->true mid-session, since the in-game tab
-            // makes that the normal, expected way a player starts an A/B, not just
-            // something set once in the settings file before launch.
-            if (Settings.Instance.RunExperiment)
-            {
-                ValidateExperimentTarget();
-            }
-
-            // WarnIfStarvedByPriority is deliberately NOT gated on RunExperiment: it
-            // matters for LIVE telemetry too, since a starved-but-Enabled target reads
-            // (near-)zero in its own TelemetryValues column regardless of whether an A/B
-            // run is in progress. It IS gated on the target itself being Enabled — see
-            // WarnIfStarvedByPriority's own guard.
-            CheckStarvation();
-        }
-
-        /// <summary>
-        /// The three ExperimentTarget validity checks: does the id match a feature at
-        /// all, is that feature Enabled, and does its Active setter actually do anything.
-        /// Extracted so the exact same checks run both at Init (when RunExperiment is
-        /// already true at launch) and from SettingsChanged on a false->true edge (when a
-        /// player starts an A/B mid-session via the in-game tab) — the two are otherwise
-        /// easy to let drift apart, and a bad target reaching neither path would silently
-        /// produce two identical A/B arms with no warning anywhere.
-        /// </summary>
-        private void ValidateExperimentTarget()
-        {
-            string target = Settings.Instance.ExperimentTarget;
-            IFeature feature = _host.Find(target);
-
-            if (feature == null)
-            {
-                Main.Log("Telemetry: ExperimentTarget '" + target + "' matches no feature Id. " +
-                         "The A/B harness will alternate nothing; both arms will be identical.");
-                return;
-            }
-
-            if (!feature.Enabled)
-            {
-                Main.Log("Telemetry: ExperimentTarget '" + target + "' (" + feature.DisplayName + ") is not " +
-                         "Enabled. FeatureHost.Apply never claims for a disabled feature, so alternating its " +
-                         "Active flag changes nothing; both arms will be identical.");
-            }
-
-            // Probe for an inert Active setter (e.g. a read-only probe) without disturbing
-            // the feature's actual state. Safe to run at any point in the session, not
-            // just Init: the swap and its restore are synchronous with no yield in
-            // between, every IFeature.Active setter here is a plain auto-property with no
-            // side effect of its own, and FeatureHost.Apply/Tick — the only code that ever
-            // reads Active — cannot run between the two assignments on Unity's
-            // single-threaded update loop. The restore runs in finally so a setter that
-            // throws mid-probe cannot leave Active inverted.
-            bool original = feature.Active;
-            bool inert;
-            try
-            {
-                feature.Active = !original;
-                inert = feature.Active == original;
-            }
-            finally
-            {
-                feature.Active = original;
-            }
-
-            if (inert)
-            {
-                Main.Log("Telemetry: ExperimentTarget '" + target + "' (" + feature.DisplayName + ") has an " +
-                         "inert Active setter; its value never changes. The A/B harness will alternate " +
-                         "nothing; both arms will be identical.");
-            }
-        }
-
-        /// <summary>
-        /// Re-evaluates claim-priority starvation (WarnIfStarvedByPriority) against the
-        /// current ExperimentTarget and feature set. Called once from ResolveTarget at
-        /// Init (unconditionally — starvation matters in LIVE mode too), and again from
-        /// SettingsChanged so a starvation condition created by toggling features at
-        /// runtime — the realistic path now that the in-game tab makes mid-session
-        /// toggling normal — is actually caught, not just the one that happened to exist
-        /// at mod load. Deliberately does not repeat ValidateExperimentTarget's
-        /// null-match / Enabled / inert-Active-setter checks: those are specific to
-        /// whether the A/B harness can produce two distinguishable arms, which is a
-        /// separate question from whether claim priority is starving the target.
-        /// </summary>
-        private void CheckStarvation()
-        {
-            string target = Settings.Instance.ExperimentTarget;
-            IFeature feature = _host.Find(target);
-            if (feature == null)
-            {
-                return;
-            }
-
-            WarnIfStarvedByPriority(feature, target);
-        }
-
-        /// <summary>
-        /// Tracks the joined Ids of whichever enabled features were found blocking the
-        /// target the last time WarnIfStarvedByPriority ran, so a re-evaluation from
-        /// CheckStarvation only logs on an actual change of that set. Settings.OnChange
-        /// fires continuously while a slider is being dragged, and re-logging the same
-        /// warning on every one of those calls would spam the one log channel the owner
-        /// has while away.
-        /// </summary>
-        private string _lastStarvationSignature;
-
-        /// <summary>
-        /// FeatureHost.Apply offers each car to ICarFeatures in _host.Features array order;
-        /// the first enabled, active one to claim a car wins it, and every later feature
-        /// never sees that car at all. If the experiment target sits behind another
-        /// enabled ICarFeature in that order, the earlier feature can claim cars the target
-        /// would otherwise have claimed — most obviously when the earlier feature's own
-        /// distance threshold is shorter, but claim priority alone is enough regardless of
-        /// settings, since which feature gets first refusal never depends on either
-        /// feature's configured distance. Left as a warning only: this does not reorder or
-        /// disable anything, it only makes a target that reads zero (or two identical A/B
-        /// arms) traceable to a cause instead of a mystery.
-        ///
-        /// Requires the target itself to be Enabled: a disabled target contributes no
-        /// columns at all (FullHeader/TelemetryValues only walk Enabled features), so
-        /// warning about its telemetry reading zero is not just possible but guaranteed
-        /// and uninteresting — ticking some unrelated feature must not warn about a
-        /// target that was never going to appear in the CSV in the first place. Every
-        /// early return below resets _lastStarvationSignature to null rather than leaving
-        /// it stale, so a condition that stops applying (target disabled, blocker
-        /// disabled, target reordered) and later recurs is not silently swallowed by a
-        /// signature left over from before it stopped applying.
-        /// </summary>
-        private void WarnIfStarvedByPriority(IFeature feature, string target)
-        {
-            if (!(feature is ICarFeature) || !feature.Enabled)
-            {
-                _lastStarvationSignature = null;
-                return;
-            }
-
-            IFeature[] features = _host.Features;
-            int targetIndex = -1;
-            for (int i = 0; i < features.Length; i++)
-            {
-                if (features[i].Id == target)
-                {
-                    targetIndex = i;
-                    break;
-                }
-            }
-
-            if (targetIndex <= 0)
-            {
-                _lastStarvationSignature = null;
-                return;
-            }
-
-            var blockerIndexes = new List<int>();
-            for (int i = 0; i < targetIndex; i++)
-            {
-                if (features[i] is ICarFeature && features[i].Enabled)
-                {
-                    blockerIndexes.Add(i);
-                }
-            }
-
-            var blockerIds = new List<string>();
-            for (int i = 0; i < blockerIndexes.Count; i++)
-            {
-                blockerIds.Add(features[blockerIndexes[i]].Id);
-            }
-
-            if (blockerIds.Count == 0)
-            {
-                _lastStarvationSignature = null;
-                return;
-            }
-
-            // Includes the target id, not just the blocker set: two distinct targets that
-            // happen to share the same blocker set must not swallow each other's warning.
-            // Unreachable today — solver_lod is the only feature that can sit behind
-            // another enabled ICarFeature — but cheap to get right now rather than later.
-            string signature = target + "|" + string.Join("|", blockerIds.ToArray());
-            if (signature == _lastStarvationSignature)
-            {
-                return;
-            }
-
-            _lastStarvationSignature = signature;
-
-            for (int i = 0; i < blockerIndexes.Count; i++)
-            {
-                IFeature blocker = features[blockerIndexes[i]];
-                Main.Log("Telemetry: ExperimentTarget '" + target + "' (" + feature.DisplayName + ") sits " +
-                         "behind enabled feature '" + blocker.Id + "' (" + blocker.DisplayName +
-                         ") in claim priority order. '" + blocker.Id + "' may claim cars before the " +
-                         "target ever sees them, so the target's telemetry may read zero and both A/B " +
-                         "arms may be identical.");
-            }
+            ResetWindow();
         }
 
         /// <summary>
@@ -348,8 +118,7 @@ namespace Highball
 
                 string enabledJoin = string.Join("|", EnabledFeatures());
                 _writer.WriteLine("# SESSION " + DateTime.Now.ToString("o", CultureInfo.InvariantCulture)
-                                  + " features=" + enabledJoin
-                                  + " target=" + Settings.Instance.ExperimentTarget);
+                                  + " features=" + enabledJoin);
                 _writer.WriteLine("# " + SettingsLine());
                 _writer.WriteLine(string.Join(",", FullHeader()));
 
@@ -377,7 +146,7 @@ namespace Highball
         /// A feature whose TelemetryHeaders and TelemetryValues lengths disagree shifts
         /// every column to its right with no diagnostic. Checked whenever a file's header
         /// is written so a newly-enabled feature is validated too, not just the set
-        /// present at Init().
+        /// present when recording started.
         /// </summary>
         private void ValidateFeatureTelemetryLengths()
         {
@@ -415,14 +184,10 @@ namespace Highball
 
         internal void Tick(float deltaTime)
         {
-            // Settling after a switch: drive the clock but do not count these frames. Only
-            // meaningful while the A/B experiment is alternating arms — LIVE mode (the
-            // default) never switches anything, so there is no transient to settle after
-            // and frames are never discarded here regardless of what _settleRemaining was
-            // last set to.
-            if (Settings.Instance.RunExperiment && _settleRemaining > 0f)
+            // Checked on every tick rather than trusted from the last edge: OnToggle and
+            // OnUnload can close the writer without any settings change at all.
+            if (!Settings.Instance.EnableTelemetry || _writer == null)
             {
-                _settleRemaining -= deltaTime;
                 return;
             }
 
@@ -430,18 +195,53 @@ namespace Highball
             _frameSeconds += deltaTime;
             _windowElapsed += deltaTime;
 
-            if (_windowElapsed < Settings.Instance.ExperimentWindowSeconds)
+            if (_windowElapsed < Settings.Instance.TelemetryIntervalSeconds)
             {
                 return;
             }
 
             FlushWindow();
-            SwitchMode();
+        }
+
+        /// <summary>
+        /// Called from Settings.OnChange, i.e. on every settings-panel edit, since UMM does
+        /// not say which field changed. Starts recording on an off->on edge and stops on an
+        /// on->off edge. Any other edit discards the in-flight window without flushing it:
+        /// those frames may now span two different configurations, so averaging them into
+        /// one row would report a number produced by neither.
+        /// </summary>
+        internal void SettingsChanged()
+        {
+            bool enabledNow = Settings.Instance.EnableTelemetry;
+
+            if (enabledNow && !_lastEnabled)
+            {
+                StartRecording();
+            }
+            else if (!enabledNow && _lastEnabled)
+            {
+                Shutdown();
+                CsvPath = null;
+                ResetWindow();
+            }
+            else
+            {
+                ResetWindow();
+            }
+
+            _lastEnabled = enabledNow;
+        }
+
+        private void ResetWindow()
+        {
+            _frames = 0;
+            _frameSeconds = 0f;
+            _windowElapsed = 0f;
         }
 
         private string[] BaseHeaders()
         {
-            return new[] { "wall_clock", "mode", "window_s", "frames", "avg_frame_ms", "fps", "tracked", "moving" };
+            return new[] { "wall_clock", "window_s", "frames", "avg_frame_ms", "fps", "tracked", "moving" };
         }
 
         private string[] EnabledFeatures()
@@ -458,15 +258,13 @@ namespace Highball
 
         /// <summary>
         /// The value FlushWindow rolls over on: the enabled feature set (which columns
-        /// depend on) plus ExperimentTarget (which what ACTIVE/BASELINE mean depends on),
-        /// plus the tuning settings whose values determine what the data columns mean
-        /// (most critically MovingSpeedThreshold). Any of these changing mid-session makes
-        /// every later row incomparable with the rows already in the open file, so all
-        /// belong in the same drift key.
+        /// depend on) plus the tuning settings whose values determine what the data columns
+        /// mean. Any of these changing mid-session makes every later row incomparable with
+        /// the rows already in the open file, so all belong in the same drift key.
         /// </summary>
         private string DriftKey(string enabledJoin)
         {
-            return enabledJoin + "|target=" + Settings.Instance.ExperimentTarget + "|" + SettingsLine();
+            return enabledJoin + "|" + SettingsLine();
         }
 
         private string DriftKey()
@@ -476,26 +274,20 @@ namespace Highball
 
         /// <summary>
         /// One extra header line recording every tunable that can change what the CSV's
-        /// numbers mean — most importantly MovingSpeedThreshold, which determines the
-        /// `moving` column and therefore the headroom verdict the whole harness exists to
-        /// inform. Two files with different values here are not comparable, and without
-        /// this line that difference would be invisible to a reader who flat-reads every
-        /// CSV into one dataframe.
+        /// numbers mean. Two files with different values here are not comparable, and
+        /// without this line that difference would be invisible to a reader who flat-reads
+        /// every CSV into one dataframe.
         /// </summary>
         private string SettingsLine()
         {
             Settings s = Settings.Instance;
             return string.Format(CultureInfo.InvariantCulture,
-                "SETTINGS min_distance_m={0} steady_accel_threshold={1} required_steady_s={2} " +
-                "moving_speed_threshold={3} low_solver_iterations={4} refresh_interval_s={5} " +
-                "evaluate_interval_s={6} experiment_window_s={7} car_shadow_distance_m={8} " +
-                "tree_billboard_distance_m={9} tree_max_full_lod_count={10} " +
-                "tree_crossfade_length_m={11} detail_object_distance_m={12}",
-                s.MinDistanceMeters, s.SteadyAccelThreshold, s.RequiredSteadySeconds,
-                s.MovingSpeedThreshold, s.LowSolverIterations, s.RefreshIntervalSeconds,
-                s.EvaluateIntervalSeconds, s.ExperimentWindowSeconds, s.CarShadowDistanceMeters,
-                s.TreeBillboardDistanceMeters, s.TreeMaxFullLodCount, s.TreeCrossFadeLengthMeters,
-                s.DetailObjectDistanceMeters);
+                "SETTINGS refresh_interval_s={0} evaluate_interval_s={1} telemetry_interval_s={2} " +
+                "car_shadow_distance_m={3} tree_billboard_distance_m={4} tree_max_full_lod_count={5} " +
+                "tree_crossfade_length_m={6} detail_object_distance_m={7}",
+                s.RefreshIntervalSeconds, s.EvaluateIntervalSeconds, s.TelemetryIntervalSeconds,
+                s.CarShadowDistanceMeters, s.TreeBillboardDistanceMeters, s.TreeMaxFullLodCount,
+                s.TreeCrossFadeLengthMeters, s.DetailObjectDistanceMeters);
         }
 
         /// <summary>
@@ -516,22 +308,18 @@ namespace Highball
         }
 
         /// <summary>
-        /// The `mode` column's value for the row about to be written: LIVE whenever
-        /// RunExperiment is off — normal operation, where every feature simply follows
-        /// its own Enabled toggle and there are no arms to distinguish. ACTIVE/BASELINE
-        /// only mean something while the A/B harness is alternating the experiment
-        /// target between windows. Internal rather than private so Main's GUI readout can
-        /// show the same value FlushWindow is about to stamp, without duplicating the
-        /// LIVE-vs-ACTIVE/BASELINE decision anywhere else.
+        /// Short status for the settings panels, so both the UMM panel and the in-game tab
+        /// can show whether anything is being written without either one duplicating the
+        /// decision.
         /// </summary>
-        internal string ModeLabel()
+        internal string StatusLabel()
         {
-            if (!Settings.Instance.RunExperiment)
+            if (!Settings.Instance.EnableTelemetry)
             {
-                return "LIVE";
+                return "off";
             }
 
-            return _activeWindow ? "ACTIVE" : "BASELINE";
+            return _writer != null ? "recording" : "failed";
         }
 
         private void FlushWindow()
@@ -539,15 +327,13 @@ namespace Highball
             if (_frames > 0 && _windowElapsed > 0f)
             {
                 // A mid-session Enabled toggle changes what FullHeader() and the cells below
-                // would produce; a mid-session ExperimentTarget edit changes what ACTIVE and
-                // BASELINE mean without changing a single column. Either drifts the open
-                // file's banner out from under its own rows, so both roll over to a new file
-                // rather than re-emit a second header into this one, or silently reinterpret
-                // rows under the old one. Skipped once _writer is null: telemetry already
-                // failed and stays permanently degraded.
+                // would produce, and a tuning edit changes what the numbers mean. Either
+                // drifts the open file's banner out from under its own rows, so both roll
+                // over to a new file rather than re-emit a second header into this one.
+                // Skipped once _writer is null: telemetry already failed and stays degraded.
                 if (_writer != null && DriftKey() != _headerDriftKey)
                 {
-                    Main.Log("Telemetry: enabled feature set or experiment target changed; rolling over to a new file.");
+                    Main.Log("Telemetry: enabled feature set or settings changed; rolling over to a new file.");
                     OpenNewFile();
                 }
 
@@ -557,7 +343,6 @@ namespace Highball
                 var cells = new List<string>
                 {
                     DateTime.Now.ToString("HH:mm:ss.fff", CultureInfo.InvariantCulture),
-                    ModeLabel(),
                     _windowElapsed.ToString("F2", CultureInfo.InvariantCulture),
                     _frames.ToString(CultureInfo.InvariantCulture),
                     avgFrameMs.ToString("F3", CultureInfo.InvariantCulture),
@@ -576,162 +361,7 @@ namespace Highball
                 WriteRow(cells.ToArray());
             }
 
-            _frames = 0;
-            _frameSeconds = 0f;
-            _windowElapsed = 0f;
-        }
-
-        private void SwitchMode()
-        {
-            if (!Settings.Instance.RunExperiment)
-            {
-                // LIVE mode: nothing alternates, so there is no arm to switch to and no
-                // settle delay to serve. ApplyMode already pins every feature to its own
-                // Enabled toggle regardless of _activeWindow whenever RunExperiment is
-                // off (see its `alternating` flag) — leaving _activeWindow untouched here
-                // does not change what any feature does.
-                return;
-            }
-
-            _activeWindow = !_activeWindow;
-            ApplyMode();
-            _settleRemaining = SettleSeconds;
-        }
-
-        /// <summary>
-        /// Sets the window state directly and applies it immediately, bypassing
-        /// SwitchMode's alternation. Used both when the experiment is off
-        /// (ForceActive(true) pins every feature on) and when it is on
-        /// (ForceActive(false) starts the session on baseline, pinning every feature on
-        /// except the experiment target).
-        /// </summary>
-        internal void ForceActive(bool value)
-        {
-            _activeWindow = value;
-            ApplyMode();
-            _frames = 0;
-            _frameSeconds = 0f;
-            _windowElapsed = 0f;
-            _settleRemaining = SettleSeconds;
-        }
-
-        /// <summary>
-        /// Called from Settings.OnChange, i.e. on every settings-panel edit, since UMM does
-        /// not say which field changed. Any edit can invalidate the in-flight window — it may
-        /// now span frames measured under two different configurations — so this discards
-        /// the window's accumulated frames without flushing them, re-arms the settle timer as
-        /// if a mode switch had just happened, and re-runs ApplyMode so the new settings
-        /// (including a possible RunExperiment or ExperimentTarget change) take effect
-        /// immediately rather than waiting for a natural window boundary that, if
-        /// RunExperiment was just turned off, will never come.
-        ///
-        /// With LIVE as the default, turning RunExperiment on mid-session is the normal way
-        /// a player starts an A/B run — the equivalent of Main.OnToggle's ForceActive(false)
-        /// at mod-enable time, which starts every run on baseline so the first recorded arm
-        /// is a control. This detects that same false-to-true edge (via _lastRunExperiment,
-        /// since UMM does not tell us which field changed) and forces _activeWindow to false
-        /// before ApplyMode runs, so a mid-session A/B start gets the same guarantee: its
-        /// first recorded window is always BASELINE, never the treatment arm.
-        /// </summary>
-        internal void SettingsChanged()
-        {
-            bool runExperimentNow = Settings.Instance.RunExperiment;
-            bool justTurnedOn = runExperimentNow && !_lastRunExperiment;
-
-            _frames = 0;
-            _frameSeconds = 0f;
-            _windowElapsed = 0f;
-            _settleRemaining = SettleSeconds;
-
-            if (justTurnedOn)
-            {
-                _activeWindow = false;
-            }
-
-            ApplyMode();
-            _lastRunExperiment = runExperimentNow;
-
-            // Guarded on its own, matching ResolveTarget's guard at Init: both
-            // ValidateExperimentTarget and CheckStarvation walk an arbitrary IFeature's
-            // Id/DisplayName/Enabled/Active, which is structurally throwable, and
-            // Settings.OnChange has no try/catch of its own around
-            // Main.TelemetrySettingsChanged — an uncaught throw here would propagate into
-            // UMM's settings UI instead of merely degrading telemetry.
-            try
-            {
-                if (justTurnedOn)
-                {
-                    // Re-run the exact validity checks ResolveTarget performs at Init: a
-                    // mid-session RunExperiment false->true edge is now the documented,
-                    // expected way a player starts an A/B (via the in-game tab's toggle),
-                    // not just a settings file that already had it on at launch. Without
-                    // this, turning the A/B on mid-session for a missing/disabled/inert
-                    // target produced no warning anywhere — the exact defect the
-                    // starvation re-check below was added for, reintroduced one guard
-                    // away by gating ResolveTarget itself on RunExperiment.
-                    ValidateExperimentTarget();
-                }
-
-                // Re-evaluate claim-priority starvation on every settings edit, not just
-                // once at mod load: both CarRendererFeature and SolverLodFeature ship
-                // off, and the in-game tab makes ticking either box mid-session the
-                // normal path, so a launch-time-only check would never see a starvation
-                // condition created this way.
-                CheckStarvation();
-            }
-            catch (Exception ex)
-            {
-                Main.Log("Telemetry: target validation failed: " + ex.Message);
-            }
-        }
-
-        /// <summary>
-        /// Only the feature under test (Settings.ExperimentTarget) alternates with
-        /// _activeWindow, and only while RunExperiment is on. Every other feature is pinned
-        /// Active so its own Enabled toggle is the sole thing controlling it. Flipping all of
-        /// them at once would confound the comparison, since an fps delta could not be
-        /// attributed to any one of them.
-        ///
-        /// Checking RunExperiment here (rather than trusting _activeWindow alone) matters
-        /// because _activeWindow goes stale the moment RunExperiment turns false: SwitchMode
-        /// stops advancing it once the experiment is off (see SwitchMode's own guard), so it
-        /// keeps whatever value A/B alternation last left it at. Without this check, turning
-        /// the experiment off while the window happens to be BASELINE would leave the target
-        /// pinned Active=false forever. With it, every feature takes the "pin active" branch
-        /// once RunExperiment is off, regardless of whatever _activeWindow was last left at.
-        ///
-        /// A feature that is Enabled but not Active must claim nothing and release
-        /// everything, so a BASELINE window is a true control. Switching a feature to
-        /// inactive releases synchronously here rather than waiting for the next
-        /// _host.Apply pass: a BASELINE window must not start counting frames while cars
-        /// are still downgraded from the preceding ACTIVE window.
-        /// </summary>
-        private void ApplyMode()
-        {
-            IFeature[] features = _host.Features;
-            string target = Settings.Instance.ExperimentTarget;
-            bool alternating = Settings.Instance.RunExperiment;
-
-            for (int i = 0; i < features.Length; i++)
-            {
-                bool value = (alternating && features[i].Id == target) ? _activeWindow : true;
-
-                // Set the flag before attempting release, so a throwing ReleaseAll can
-                // never prevent this or any later feature's Active flag from being set.
-                features[i].Active = value;
-
-                if (!value)
-                {
-                    try
-                    {
-                        features[i].ReleaseAll();
-                    }
-                    catch (Exception ex)
-                    {
-                        Main.Log("Feature '" + features[i].Id + "' threw from ReleaseAll(): " + ex);
-                    }
-                }
-            }
+            ResetWindow();
         }
 
         private void WriteRow(string[] cells)

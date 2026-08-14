@@ -11,23 +11,13 @@ namespace Highball
         string Id { get; }
         string DisplayName { get; }
 
-        /// <summary>Shown in the panel. Experimental features ship off.</summary>
-        bool IsExperimental { get; }
-
         /// <summary>The player's toggle, backed by Settings.</summary>
         bool Enabled { get; }
 
         /// <summary>
-        /// Flipped by the A/B harness when this feature is the experiment target. A
-        /// feature that is Enabled but not Active must claim nothing and release
-        /// everything, so a BASELINE window is a true control.
-        /// </summary>
-        bool Active { get; set; }
-
-        /// <summary>
-        /// Called once per evaluation pass on features that are Enabled and Active.
-        /// Features that act on global state rather than individual cars do their work
-        /// here. Car-shaped features can leave it empty.
+        /// Called once per evaluation pass on features that are Enabled. Features that act
+        /// on global state rather than individual cars do their work here. Car-shaped
+        /// features can leave it empty.
         /// </summary>
         void Tick(float deltaTime);
 
@@ -40,7 +30,7 @@ namespace Highball
 
     /// <summary>
     /// A feature that acts on individual cars, and therefore participates in claim
-    /// arbitration. The first enabled, active ICarFeature to claim a car acts on it.
+    /// arbitration. The first enabled ICarFeature to claim a car acts on it.
     /// </summary>
     internal interface ICarFeature : IFeature
     {
