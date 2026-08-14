@@ -207,35 +207,6 @@ namespace Highball
 
                 panel.Spacer(16f);
 
-                panel.AddSection("Physics", b =>
-                {
-                    IConfigurableElement tickRate = null;
-
-                    b.AddFieldToggle("Lower tick rate  [experimental]", () => s.EnableFixedTimestep,
-                        v => { s.EnableFixedTimestep = v; s.OnChange(); Disable(tickRate, !v); }, true)
-                     .Tooltip("Physics tick rate",
-                        "Runs the physics loop less often. The only setting here that trades "
-                        + "simulation fidelity for framerate: coupler slack, braking and train "
-                        + "handling are all simulated in that loop, so expect handling to change.");
-
-                    tickRate = b.AddField("Steps per second",
-                        b.AddSlider(() => s.PhysicsTickRateHz,
-                            () => s.PhysicsTickRateHz.ToString("F0") + " Hz",
-                            v => { s.PhysicsTickRateHz = v; s.OnChange(); },
-                            25f, 50f, true, v => { }))
-                     .Tooltip("Steps per second",
-                        "The game's own rate is 50 Hz. Lower means fewer physics steps per second "
-                        + "and more framerate, at the cost of a coarser simulation. At or above 50 "
-                        + "this does nothing.");
-
-                    Disable(tickRate, !s.EnableFixedTimestep);
-
-                    b.AddField("Running at", () => Main.TimestepStatus(),
-                        UIPanelBuilder.Frequency.Periodic);
-                }, 8f);
-
-                panel.Spacer(16f);
-
                 panel.AddSection("Telemetry", b =>
                 {
                     IConfigurableElement interval = null;

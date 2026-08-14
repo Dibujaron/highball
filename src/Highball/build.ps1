@@ -60,7 +60,6 @@ $sources = @(
     (Join-Path $here "FeatureHost.cs"),
     (Join-Path $here "CarRendererFeature.cs"),
     (Join-Path $here "TerrainLodFeature.cs"),
-    (Join-Path $here "FixedTimestepFeature.cs"),
     (Join-Path $here "FrameBudgetProbe.cs"),
     (Join-Path $here "ScriptAttributionProbe.cs"),
     (Join-Path $here "Telemetry.cs"),

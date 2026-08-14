@@ -25,11 +25,6 @@ internal static class Tests
         Check(Decisions.ClampReductionInt(50, 200) == 50, "int clamp keeps the lower configured value");
         Check(Decisions.ClampReductionInt(500, 50) == 50, "int clamp keeps the original when configured is higher");
 
-        // ClampRelaxation: same rule where a LARGER value means less work (physics timestep).
-        CheckFloat(Decisions.ClampRelaxation(0.025f, 0.02f), 0.025f, "relax keeps the longer configured step");
-        CheckFloat(Decisions.ClampRelaxation(0.01f, 0.02f), 0.02f, "relax refuses to shorten the game's own step");
-        CheckFloat(Decisions.ClampRelaxation(0.02f, 0.02f), 0.02f, "relax is a no-op when equal");
-
         // Hysteresis: suppress past the threshold, but do not restore until well inside it,
         // so a car hovering at the boundary cannot thrash thousands of renderer writes.
         Check(Decisions.ShouldSuppressAtDistance(310f, 300f, 50f, false), "suppresses past the threshold");
