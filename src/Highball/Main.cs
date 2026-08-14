@@ -224,7 +224,10 @@ namespace Highball
 
         public static void Log(string msg)
         {
-            ModEntry?.Logger.Log("[Highball] " + msg);
+            // UMM's own logger already prefixes every line with the mod's display name, so
+            // adding "[Highball] " here doubled it into "[Highball] [Highball] ..." in the
+            // player log. Log the message alone.
+            ModEntry?.Logger.Log(msg);
         }
 
         /// <summary>

@@ -10,39 +10,50 @@ consists degrades framerate badly, on hardware that should be nowhere near its l
 ## Measurement first
 
 Every feature in this mod exists because a measurement justified it, and every feature
-ships with its own off switch. That discipline exists because it was learned the hard
-way: `docs/STATE.md` records two performance hypotheses — Auto Engineer planning cost, and
-solver-iteration LOD on distant rolling stock — that looked plausible going in and turned
-out to be non-issues (or unproven, at best) once actually measured. Nothing here ships on
-"seems like it should help." A feature either carries its own evidence, or it stays behind
-a read-only probe until it does.
+ships with its own off switch. That discipline exists because it was learned the hard way.
+Three physics hypotheses have now been measured and killed:
 
-Solver LOD's one A/B run so far showed no benefit, so it ships **off**, kept for further
-experimentation. The sleep headroom probe mutates nothing, so it ships **on**.
+| Hypothesis | Measured | Threshold | Verdict |
+| --- | --- | --- | --- |
+| Auto Engineer planning cost | 0.23% of wall time | 2% | Dead — AE plans at roughly 1 Hz per consist, not every tick. |
+| Stationary sleep (forcing parked cars to sleep) | 0.31% of tracked cars addressable | 10% | Dead before it was built — PhysX already sleeps nearly every parked car on its own. |
+| Solver iteration LOD on distant, steady rolling stock | −0.18 fps over five 30 s windows per arm (BASELINE vs. ACTIVE) | — | Dead — measurably no benefit, in the wrong direction, against a ±9 fps noise floor. |
+
+**Physics is not the bottleneck.** By elimination, rendering-CPU is the leading remaining
+suspect — the community's most effective workaround (zooming the camera fully in) changes
+rendering work, not physics work. The two LOD features below target that suspect; neither
+has been measured in-game yet, so both ship off. Full detail lives in `docs/STATE.md`.
+
+Nothing here ships on "seems like it should help." A feature either carries its own
+evidence, or it stays behind a read-only probe (or an explicit `[experimental]` label)
+until it does.
 
 ## Features
 
 | Feature | Id | Status | What it does |
 | --- | --- | --- | --- |
-| Solver iteration LOD | `solver_lod` | Experimental, **off** by default | Lowers PhysX solver iterations on rolling stock that is far from the camera and has been mechanically steady for a while. Its one measurement so far showed no benefit; it stays available for further A/B runs, not as a recommended setting. |
-| Sleep headroom probe | `sleep_headroom` | Read-only, **on** by default | Counts how many tracked cars are stationary but not asleep in PhysX. Answers, before any code is written that would act on it, whether forcing sleep on parked cars is a lever worth pulling at all. Mutates nothing. |
+| Tree & ground detail LOD | `terrain_lod` | Experimental, **off** by default | Draws distant trees as batched billboards and shortens ground-detail draw distance. Never changes density — the forest stays as thick as you set it. Unmeasured in-game; the rendering-CPU hypothesis it targets is the current lead but is not yet confirmed. |
+| Car renderer LOD | `car_renderer_lod` | Experimental, **off** by default | Stops distant rolling stock from casting shadows. Cars never disappear or change shape. Unmeasured in-game, for the same reason as above. |
+| Solver iteration LOD | `solver_lod` | Experimental, **off** by default | Lowers PhysX solver iterations on rolling stock that is far from the camera and has been mechanically steady for a while. **Measured and dead**: its one A/B run showed no benefit (−0.18 fps, wrong direction). Kept available for further experimentation, not as a recommended setting. |
+| Sleep headroom probe | `sleep_headroom` | Read-only diagnostic, **on** by default | Counts how many tracked cars are stationary but not asleep in PhysX. Answered, before any code was written to act on it, whether forcing sleep on parked cars was a lever worth pulling. It was not (0.31% addressable) — `StationarySleepFeature` will not be built. Mutates nothing, so it stays on. |
 
-**The mod modifies PhysX state only at runtime and never persists any change to the save
-file.** Everything a feature claims is handed back on toggle-off and on mod unload.
-
-### Not built yet: stationary sleep
-
-A feature that forces distant, stationary cars to sleep is gated behind the headroom
-probe's result (see below) and is deliberately not implemented yet — building it before
-measuring would repeat the same mistake `docs/STATE.md` already records twice.
-`SleepMinDistanceMeters` and `RequiredStationarySeconds` exist in the settings panel as
-placeholders for it and currently do nothing.
+**The mod modifies PhysX and renderer state only at runtime and never persists any change
+to the save file.** Everything a feature claims is handed back on toggle-off and on mod
+unload.
 
 ## Settings
 
-All settings are drawn by Unity Mod Manager directly from the mod's `[Draw]` attributes —
-there is no custom settings window. Open the Highball panel in the UMM mod list to see and
-change them; tooltips on each field explain what it does.
+Settings are available in two places:
+
+- **Unity Mod Manager's own mod panel.** Drawn directly from the mod's `[Draw]`
+  attributes — there is no custom settings window there. Tooltips on each field explain
+  what it does.
+- **A Highball tab in Railroader's own in-game preferences window**, added via a Harmony
+  patch so the same settings can be tuned without relaunching. It mirrors the UMM panel's
+  ranges and gating: a feature's tuning sliders are only interactable while that feature's
+  own toggle is on, and the same `[experimental]` labels appear in both places. If the
+  patch fails (e.g. an incompatible game update), it logs why and leaves the preferences
+  window untouched — the UMM panel is always the fallback.
 
 ## Building
 
@@ -68,34 +79,40 @@ without the game. Run it with:
 .\tools\HighballTests\build.ps1
 ```
 
-17 assertions, no game required. Everything downstream of `Decisions` — car discovery,
-telemetry, the settings panel — touches Unity APIs that only exist inside the running game,
-so that code is verified by compiling cleanly and by reading in-game telemetry instead.
+33 assertions, no game required — and they cover only that pure decision logic, not car
+discovery, telemetry, the settings panel, or the in-game tab. Everything downstream of
+`Decisions` touches Unity APIs that only exist inside the running game, so that code is
+verified by compiling cleanly and by reading in-game telemetry instead.
 
 ## Telemetry
 
-When the A/B experiment is running, Highball writes one CSV file **per session** to
+Highball writes one CSV file **per session**, regardless of settings, to
 
 ```
 %USERPROFILE%\AppData\LocalLow\Giraffe Lab LLC\Railroader\
 ```
 
-named `Highball-<yyyyMMdd-HHmmssfff>.csv`. This replaces an earlier design that appended
-every session to a single `Highball.csv`; that file no longer exists.
+named `Highball-<yyyyMMdd-HHmmssfff>.csv`.
 
 Each file starts with exactly one `#`-prefixed banner line recording the session
-timestamp, the Ids of every enabled feature, and `target=<ExperimentTarget>` (the one
-feature the A/B harness alternates between baseline and active windows — every other
-enabled feature holds a steady state across both arms, so any fps delta can be attributed
-to the target alone). Exactly one header line follows the banner. If the set of enabled
-features changes mid-session, the writer does not re-emit a header into the same file —
-it rolls over to a new file instead (`...-2.csv`, `...-3.csv`, and so on), so every file
-on disk has one banner and one header and can be read as ordinary CSV:
+timestamp, the Ids of every enabled feature, and `target=<ExperimentTarget>`, followed by
+one more `#`-prefixed settings line, then exactly one header line — readable with a plain
+CSV reader that skips `#` lines:
 
 ```python
 import pandas as pd
 df = pd.read_csv(path, comment="#")
 ```
+
+The `mode` column reads `LIVE` during normal play, when every feature simply follows its
+own toggle. Turning on the optional A/B experiment (off by default) additionally alternates
+one named feature (`ExperimentTarget`) between baseline and active windows, stamping each
+row `BASELINE` or `ACTIVE` instead, so that feature's effect can be isolated without the
+player running a manual protocol. Toggling the A/B experiment mid-session does **not** start
+a new file — `LIVE` and `ACTIVE`/`BASELINE` rows can both appear in the same CSV, in
+sequence. The file only rolls over to a new one (`...-2.csv`, `...-3.csv`, ...) if the set
+of enabled features or the experiment target actually changes, since that changes what the
+columns or the mode labels mean.
 
 If `ExperimentTarget` names a feature that's missing, disabled, or has an inert `Active`
 setter, Highball logs a loud warning at startup — an A/B whose two arms are actually
@@ -113,6 +130,8 @@ stationary but still awake, using a decision rule agreed before any data was col
 | 10–30% | `marginal` | Some headroom exists, but building a sleep feature is a judgment call, not an obvious win. |
 | > 30% | `real` | A meaningful share of parked cars sit awake; a stationary-sleep feature is worth building. |
 
+The measured result on the reference save was 0.31% — solidly `none`.
+
 ## Prior art
 
 `RailroaderStockOptimizer` by thebikwirm is prior work in this same area, addressing
@@ -122,3 +141,5 @@ rolling-stock performance in Railroader.
 
 - [Unity Mod Manager](https://www.nexusmods.com/site/mods/21)
 - Railroader
+
+All changes are runtime-only and never persist to the save.

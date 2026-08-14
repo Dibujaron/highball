@@ -36,6 +36,7 @@ $refs = @(
     "UnityEngine.PhysicsModule.dll",
     "UnityEngine.IMGUIModule.dll",
     "UnityEngine.TerrainModule.dll",
+    "UnityEngine.UI.dll",
     "Unity.TextMeshPro.dll",
     "Assembly-CSharp.dll",
     "Definition.dll",

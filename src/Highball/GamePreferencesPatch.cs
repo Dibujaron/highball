@@ -1,6 +1,8 @@
 using System;
 using HarmonyLib;
 using UI.Builder;
+using UnityEngine;
+using UnityEngine.UI;
 
 namespace Highball
 {
@@ -14,8 +16,12 @@ namespace Highball
     /// to a broken preferences window. Every layer — resolving the type/method, applying
     /// the patch, running the postfix, and building the tab's contents — is wrapped in its
     /// own try/catch so a throw at any layer cannot propagate into the game's UI code.
+    ///
+    /// This class is patched manually from Apply() below, called once from Main.Load; it
+    /// declares no Harmony target of its own, so it must not carry a bare [HarmonyPatch]
+    /// attribute (that shape exists for harmony.PatchAll() to discover automatically, which
+    /// this project never calls).
     /// </summary>
-    [HarmonyPatch]
     internal static class GamePreferencesPatch
     {
         /// <summary>
@@ -100,39 +106,68 @@ namespace Highball
 
                 panel.AddSection("Trees & ground detail", b =>
                 {
-                    b.AddFieldToggle("Enable", () => s.EnableTerrainLod,
-                        v => { s.EnableTerrainLod = v; s.OnChange(); }, true);
+                    // Declared before the toggle so the toggle's own callback can capture
+                    // and gate them by closure; each is assigned below once AddSlider
+                    // builds it, and the toggle callback only ever runs later, after a
+                    // player interaction, by which point every one is assigned.
+                    RectTransform billboardDistance = null;
+                    RectTransform detailDistance = null;
+                    RectTransform maxFullLod = null;
+                    RectTransform crossFade = null;
 
-                    b.AddSlider(() => s.TreeBillboardDistanceMeters,
+                    Action<bool> setTreeSlidersInteractable = value =>
+                    {
+                        SetInteractable(billboardDistance, value);
+                        SetInteractable(detailDistance, value);
+                        SetInteractable(maxFullLod, value);
+                        SetInteractable(crossFade, value);
+                    };
+
+                    b.AddFieldToggle("Enable  [experimental]", () => s.EnableTerrainLod,
+                        v => { s.EnableTerrainLod = v; s.OnChange(); setTreeSlidersInteractable(v); }, true);
+
+                    billboardDistance = b.AddSlider(() => s.TreeBillboardDistanceMeters,
                         () => s.TreeBillboardDistanceMeters.ToString("F0") + " m",
                         v => { s.TreeBillboardDistanceMeters = v; s.OnChange(); },
                         10f, 250f, false, v => { });
 
-                    b.AddSlider(() => s.DetailObjectDistanceMeters,
+                    detailDistance = b.AddSlider(() => s.DetailObjectDistanceMeters,
                         () => s.DetailObjectDistanceMeters.ToString("F0") + " m",
                         v => { s.DetailObjectDistanceMeters = v; s.OnChange(); },
                         10f, 250f, false, v => { });
 
-                    b.AddSlider(() => s.TreeMaxFullLodCount,
+                    maxFullLod = b.AddSlider(() => s.TreeMaxFullLodCount,
                         () => s.TreeMaxFullLodCount.ToString(),
                         v => { s.TreeMaxFullLodCount = (int)v; s.OnChange(); },
                         0f, 250f, true, v => { });
 
-                    b.AddSlider(() => s.TreeCrossFadeLengthMeters,
+                    crossFade = b.AddSlider(() => s.TreeCrossFadeLengthMeters,
                         () => s.TreeCrossFadeLengthMeters.ToString("F0") + " m",
                         v => { s.TreeCrossFadeLengthMeters = v; s.OnChange(); },
                         0f, 100f, false, v => { });
+
+                    // Match Settings.cs's VisibleOn = "EnableTerrainLod|true": these sliders
+                    // do nothing while the feature is off, so the in-game tab should say so
+                    // too rather than leaving them live.
+                    setTreeSlidersInteractable(s.EnableTerrainLod);
                 }, 8f);
 
                 panel.AddSection("Rolling stock", b =>
                 {
-                    b.AddFieldToggle("Car renderer LOD", () => s.EnableCarRendererLod,
-                        v => { s.EnableCarRendererLod = v; s.OnChange(); }, true);
+                    RectTransform shadowDistance = null;
 
-                    b.AddSlider(() => s.CarShadowDistanceMeters,
+                    Action<bool> setCarSlidersInteractable = value => SetInteractable(shadowDistance, value);
+
+                    b.AddFieldToggle("Car renderer LOD  [experimental]", () => s.EnableCarRendererLod,
+                        v => { s.EnableCarRendererLod = v; s.OnChange(); setCarSlidersInteractable(v); }, true);
+
+                    shadowDistance = b.AddSlider(() => s.CarShadowDistanceMeters,
                         () => s.CarShadowDistanceMeters.ToString("F0") + " m",
                         v => { s.CarShadowDistanceMeters = v; s.OnChange(); },
                         50f, 2000f, false, v => { });
+
+                    // Match Settings.cs's VisibleOn = "EnableCarRendererLod|true".
+                    setCarSlidersInteractable(s.EnableCarRendererLod);
 
                     b.AddFieldToggle("Solver iteration LOD (no measured benefit)",
                         () => s.EnableSolverLod,
@@ -156,6 +191,30 @@ namespace Highball
             catch (Exception ex)
             {
                 Main.Log("Highball tab content failed to build: " + ex.Message);
+            }
+        }
+
+        /// <summary>
+        /// Mirrors, for the in-game tab, the interactability Settings.cs's VisibleOn already
+        /// gives the UMM panel: a slider whose parent feature is off should not look live.
+        /// AddFieldToggle exposes an `interactable` parameter directly, but AddSlider does
+        /// not, so the slider's own Selectable component — found in its child hierarchy,
+        /// since AddSlider returns the control's outer RectTransform, not the Selectable
+        /// itself — is toggled instead. Null-safe throughout: a control that failed to
+        /// build, or whose hierarchy does not contain a Selectable, is left alone rather
+        /// than throwing.
+        /// </summary>
+        private static void SetInteractable(RectTransform control, bool interactable)
+        {
+            if (control == null)
+            {
+                return;
+            }
+
+            Selectable selectable = control.GetComponentInChildren<Selectable>(true);
+            if (selectable != null)
+            {
+                selectable.interactable = interactable;
             }
         }
     }

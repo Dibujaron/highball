@@ -96,18 +96,6 @@ namespace Highball
               Tooltip = "Draw distance for grass and ground detail. Density is never changed.")]
         public float DetailObjectDistanceMeters = 80f;
 
-        // --- reserved for StationarySleepFeature, gated on the headroom probe result ---
-
-        [Draw("Sleep min distance (m)", Type = DrawType.Slider, Min = 100, Max = 3000, Precision = 0,
-              Tooltip = "Reserved for StationarySleepFeature, which does not exist yet. "
-                      + "Has no effect until that feature is built.")]
-        public float SleepMinDistanceMeters = 500f;
-
-        [Draw("Required stationary time (s)", Type = DrawType.Slider, Min = 0.5, Max = 15, Precision = 1,
-              Tooltip = "Reserved for StationarySleepFeature, which does not exist yet. "
-                      + "Has no effect until that feature is built.")]
-        public float RequiredStationarySeconds = 5f;
-
         // --- cadence ---
 
         [Draw("Refresh interval (s)", Type = DrawType.Slider, Min = 0.5, Max = 10, Precision = 2,
@@ -153,7 +141,8 @@ namespace Highball
         /// </summary>
         [Draw("Experiment target (feature Id)", Type = DrawType.Field,
               VisibleOn = "RunExperiment|true",
-              Tooltip = "The Id of the single feature the A/B harness alternates, e.g. 'solver_lod'.")]
+              Tooltip = "The Id of the single feature the A/B harness alternates. Valid ids: "
+                      + "car_renderer_lod, solver_lod, terrain_lod, sleep_headroom.")]
         public string ExperimentTarget = "solver_lod";
 
         public override void Save(UnityModManager.ModEntry modEntry)
